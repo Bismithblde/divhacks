@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import Image from "next/image";
 import Link from "next/link";
 import {
   type FormEvent,
@@ -22,7 +23,6 @@ import {
   Footprints,
   Info,
   Layers2,
-  Navigation,
   RefreshCw,
   Search,
   SlidersHorizontal,
@@ -368,9 +368,7 @@ export function MapWorkspace() {
       </a>
       <header className="navbar">
         <Link href="/" className="brand" aria-label="BlockedNYC map home">
-          <span className="brand-icon">
-            <Navigation size={21} strokeWidth={2.4} />
-          </span>
+          <Image src="/logo.png" alt="" width={36} height={36} className="brand-icon" priority />
           BlockedNYC
           <span className="brand-divider" />
           <span className="brand-context">New York City</span>

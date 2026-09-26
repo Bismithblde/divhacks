@@ -144,12 +144,8 @@ svg {
   letter-spacing: -0.035em;
 }
 .brand-icon {
-  background: var(--primary);
-  color: var(--on-primary);
   width: 36px;
   height: 36px;
-  display: grid;
-  place-items: center;
   border-radius: var(--radius-md);
 }
 .brand-divider {
