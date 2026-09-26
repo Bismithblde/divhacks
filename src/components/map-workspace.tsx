@@ -367,11 +367,11 @@ export function MapWorkspace() {
         Skip to closure list
       </a>
       <header className="navbar">
-        <Link href="/" className="brand" aria-label="DivHacks map home">
+        <Link href="/" className="brand" aria-label="BlockedNYC map home">
           <span className="brand-icon">
             <Navigation size={21} strokeWidth={2.4} />
           </span>
-          divhacks
+          BlockedNYC
           <span className="brand-divider" />
           <span className="brand-context">New York City</span>
         </Link>
