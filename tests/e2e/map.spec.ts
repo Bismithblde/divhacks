@@ -86,7 +86,7 @@ test("real NYC feeds render; filter, inspect, search, and change time window", a
   await page.getByRole("button", { name: "All closures", exact: true }).click();
   await page.getByLabel("Find a street or event").fill("no-such-street-zzzz");
   await expect(
-    page.getByRole("heading", { name: "No matching closures" }),
+    page.getByRole("heading", { name: "No live disruptions at this hour" }),
   ).toBeVisible();
   await expect(map).toHaveAttribute("data-feature-count", "0");
   await page.getByRole("button", { name: "Reset filters" }).click();
@@ -98,9 +98,13 @@ test("real NYC feeds render; filter, inspect, search, and change time window", a
   if (await moreMap.count()) await moreMap.click();
   const timeline = page.getByTestId("closure-timeline");
   await expect(timeline).toHaveValue("0");
+  const initialTimelineText = await timeline.getAttribute("aria-valuetext");
   await timeline.press("ArrowRight");
   await expect(timeline).toHaveValue("1");
-  await expect(page.getByText(/^Tomorrow ·/)).toBeVisible();
+  await expect(timeline).not.toHaveAttribute(
+    "aria-valuetext",
+    initialTimelineText!,
+  );
   await page.getByRole("button", { name: "Data sources", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Data sources", exact: true }),
@@ -299,7 +303,7 @@ test("failed feed gives a retry flow rather than claiming clear streets", async 
     "Couldn’t load closures",
   );
   await expect(
-    page.getByRole("heading", { name: "No matching closures" }),
+    page.getByRole("heading", { name: "No live disruptions at this hour" }),
   ).toHaveCount(0);
   failed = false;
   await page.getByRole("button", { name: "Try again", exact: true }).click();

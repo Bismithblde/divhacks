@@ -149,6 +149,12 @@ export function normalizeFeature(
 export function overlaps(feature: ClosureFeature, start: number, end: number) {
   return feature.properties.start < end && feature.properties.end >= start;
 }
+export function activeAt(feature: ClosureFeature, timestamp: number) {
+  return (
+    feature.properties.start <= timestamp &&
+    feature.properties.end >= timestamp
+  );
+}
 export function geometryBounds(
   geometry: ClosureGeometry,
 ): [number, number, number, number] {

@@ -2,6 +2,7 @@ import type { FeatureCollection } from "geojson";
 import type { RouteRequest, RouteFeature } from "./types";
 import {
   buildAvoidancePolygons,
+  coordinateInObstacle,
   routeIntersectsObstacles,
 } from "./obstacles";
 import type { ClosureFeature } from "@/lib/closures/types";
@@ -9,6 +10,7 @@ import type { ClosureFeature } from "@/lib/closures/types";
 const OPENROUTESERVICE_URL =
   "https://api.openrouteservice.org/v2/directions/foot-walking/geojson";
 const REQUEST_TIMEOUT_MS = 20_000;
+const ROUTE_CORRIDOR_BUFFER_METERS = 12;
 
 export class RouteProviderError extends Error {
   constructor(
@@ -141,15 +143,74 @@ export async function findWalkingRoute(
   request: RouteRequest,
   hardObstacles: ClosureFeature[],
 ) {
-  const buffers = hardObstacles.length ? [12, 24] : [0];
-  let verificationAttempts = 0;
-  let lastRoutes: RouteFeature[] = [];
-  for (const buffer of buffers) {
+  if (
+    hardObstacles.some(
+      (obstacle) => coordinateInObstacle(request.destination, obstacle),
+    )
+  ) {
+    throw new RouteProviderError(
+      "The destination is inside a walk-around disruption. Choose a point outside the marked area.",
+      "no-route",
+    );
+  }
+  let verificationAttempts = 1;
+  const baselineRoutes = await requestRoutes(request, [], 0);
+  if (!hardObstacles.length) {
+    return { route: baselineRoutes[0], verificationAttempts };
+  }
+
+  const baselineClear = baselineRoutes.find(
+    (route) => !routeIntersectsObstacles(route, hardObstacles, 12, true),
+  );
+  if (baselineClear) return { route: baselineClear, verificationAttempts };
+
+  let corridorObstacles = [
+    ...new Map(
+      baselineRoutes
+        .flatMap((route) =>
+          hardObstacles.filter((obstacle) =>
+            routeIntersectsObstacles(
+              route,
+              [obstacle],
+              ROUTE_CORRIDOR_BUFFER_METERS,
+              true,
+            ),
+          ),
+        )
+        .map((obstacle) => [obstacle.properties.id, obstacle] as const),
+    ).values(),
+  ];
+  const originObstacleIds = new Set(
+    hardObstacles
+      .filter((obstacle) =>
+        coordinateInObstacle(request.origin, obstacle),
+      )
+      .map((obstacle) => obstacle.properties.id),
+  );
+  corridorObstacles = corridorObstacles.filter(
+    (obstacle) => !originObstacleIds.has(obstacle.properties.id),
+  );
+  let lastRoutes: RouteFeature[] = baselineRoutes;
+  for (const buffer of [12, 24, 36, 48]) {
     verificationAttempts += 1;
-    const routes = await requestRoutes(request, hardObstacles, buffer);
+    const routes = await requestRoutes(request, corridorObstacles, buffer);
     lastRoutes = routes;
+    const violations = routes.flatMap((route) =>
+      hardObstacles.filter((obstacle) =>
+        routeIntersectsObstacles(route, [obstacle], buffer, true),
+      ),
+    );
+    corridorObstacles = [
+      ...new Map(
+        [...corridorObstacles, ...violations].map((obstacle) => [
+          obstacle.properties.id,
+          obstacle,
+        ]),
+      ).values(),
+    ];
     const clear = routes.find(
-      (route) => !routeIntersectsObstacles(route, hardObstacles, buffer),
+      (route) =>
+        !routeIntersectsObstacles(route, hardObstacles, buffer, true),
     );
     if (clear) return { route: clear, verificationAttempts };
   }

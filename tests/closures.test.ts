@@ -3,10 +3,16 @@ import assert from "node:assert/strict";
 import {
   normalizeFeature,
   SOURCES,
+  activeAt,
   overlaps,
   validGeometry,
   inBounds,
 } from "../src/lib/closures/normalize";
+import {
+  newYorkDateTimeInput,
+  newYorkHourWindow,
+  TIMELINE_HOURS,
+} from "../src/lib/closures/time";
 
 const rawEvent = {
   geometry: {
@@ -38,6 +44,23 @@ test("time windows include overlapping schedules and exclude expired and later c
   assert.equal(overlaps(f, 15000, 25000), true);
   assert.equal(overlaps(f, 40001, 50000), false);
   assert.equal(overlaps(f, 1, 9999), false);
+});
+test("live disruption filtering only includes closures active at the selected instant", () => {
+  const f = normalizeFeature(rawEvent, SOURCES[0])!;
+  assert.equal(activeAt(f, 10000), true);
+  assert.equal(activeAt(f, 25000), true);
+  assert.equal(activeAt(f, 40001), false);
+});
+test("timeline advances in hourly NYC-local steps across the seven-day window", () => {
+  const now = Date.parse("2026-09-26T19:30:00.000Z");
+  const current = newYorkHourWindow(0, now);
+  const next = newYorkHourWindow(1, now);
+  assert.equal(current.start, now);
+  assert.equal(current.end - current.start, 60 * 60 * 1000);
+  assert.match(current.label, /^Now · /);
+  assert.match(next.label, /^Today · /);
+  assert.equal(newYorkDateTimeInput(24, now), "2026-09-27T15:30");
+  assert.equal(TIMELINE_HOURS, 168);
 });
 test("rejects malformed coordinates, missing timestamps, inverted schedules and missing IDs", () => {
   assert.equal(

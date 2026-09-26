@@ -36,12 +36,12 @@ import type {
   ClosureResponse,
   ClosureKind,
 } from "@/lib/closures/types";
-import { inBounds, overlaps } from "@/lib/closures/normalize";
+import { activeAt, inBounds } from "@/lib/closures/normalize";
 import {
   newYorkDateTimeInput,
   newYorkDateTimeToIso,
-  newYorkDayWindow,
-  TIMELINE_DAYS,
+  newYorkHourWindow,
+  TIMELINE_HOURS,
 } from "@/lib/closures/time";
 import type {
   Coordinate,
@@ -89,7 +89,8 @@ export function MapWorkspace() {
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [limit, setLimit] = useState(40);
   const [fitRequest, setFitRequest] = useState(0);
-  const [timelineDay, setTimelineDay] = useState(0);
+  const [timelineHour, setTimelineHour] = useState(0);
+  const [timelineAnchor, setTimelineAnchor] = useState<number | null>(null);
   const [destination, setDestination] = useState<Coordinate | null>(null);
   const [destinationLabel, setDestinationLabel] = useState("");
   const [selectingDestination, setSelectingDestination] = useState(false);
@@ -108,9 +109,16 @@ export function MapWorkspace() {
   const [routeLoading, setRouteLoading] = useState(false);
   const [routeError, setRouteError] = useState("");
   const [usingDemoLocation, setUsingDemoLocation] = useState(true);
-  const [departureTime, setDepartureTime] = useState(() =>
-    newYorkDateTimeInput(0),
-  );
+  const [departureTime, setDepartureTime] = useState("");
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const now = Date.now();
+      setTimelineAnchor(now);
+      setDepartureTime(newYorkDateTimeInput(0, now));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -160,22 +168,20 @@ export function MapWorkspace() {
   const loadedFeatures =
     data?.meta.days === PRELOAD_DAYS ? data.features : EMPTY;
   const timelineWindow = useMemo(
-    () => newYorkDayWindow(timelineDay),
-    [timelineDay],
+    () => newYorkHourWindow(timelineHour, timelineAnchor ?? 0),
+    [timelineAnchor, timelineHour],
   );
   const features = useMemo(
     () =>
-      loadedFeatures.filter((feature) =>
-        overlaps(feature, timelineWindow.start, timelineWindow.end),
-      ),
+      loadedFeatures.filter((feature) => activeAt(feature, timelineWindow.start)),
     [loadedFeatures, timelineWindow],
   );
   const timelineOptions = useMemo(
     () =>
-      Array.from({ length: TIMELINE_DAYS }, (_, offset) =>
-        newYorkDayWindow(offset),
+      Array.from({ length: TIMELINE_HOURS }, (_, offset) =>
+        newYorkHourWindow(offset, timelineAnchor ?? 0),
       ),
-    [],
+    [timelineAnchor],
   );
   const filtered = useMemo(
     () =>
@@ -226,12 +232,12 @@ export function MapWorkspace() {
     setAvoidClosureIds([]);
     setLimit(40);
   };
-  const changeTimelineDay = (value: number) => {
-    setTimelineDay(value);
+  const changeTimelineHour = (value: number) => {
+    setTimelineHour(value);
     setSelectedId(null);
     setAvoidClosureIds([]);
     setLimit(40);
-    setDepartureTime(newYorkDateTimeInput(value));
+    setDepartureTime(newYorkDateTimeInput(value, timelineAnchor ?? 0));
     setRoute(null);
     setRouteResponse(null);
     setRouteError("");
@@ -421,14 +427,14 @@ export function MapWorkspace() {
               <ChevronRight size={15} />
             </button>
           )}
-          <div className="map-timeline" aria-label="Closure timeline">
+          <div className="map-timeline" aria-label="Disruption timeline">
             <div className="timeline-heading">
               <span className="timeline-title">
-                <CalendarDays size={15} /> Closure date
+                <CalendarDays size={15} /> Live at
               </span>
               <strong>{timelineWindow.label}</strong>
               <span className="timeline-count">
-                {count.format(features.length)} mapped
+                {count.format(features.length)} active
               </span>
             </div>
             <input
@@ -438,11 +444,11 @@ export function MapWorkspace() {
               min={0}
               max={timelineOptions.length - 1}
               step={1}
-              value={timelineDay}
+              value={timelineHour}
               onChange={(event) =>
-                changeTimelineDay(Number(event.target.value))
+                changeTimelineHour(Number(event.target.value))
               }
-              aria-label="Map date"
+              aria-label="Disruption hour"
               aria-valuetext={timelineWindow.ariaLabel}
             />
             <div className="timeline-ticks" aria-hidden="true">
@@ -590,8 +596,8 @@ export function MapWorkspace() {
                 </div>
                 <div className="time-filter">
                   <CalendarDays size={17} />
-                  <span>Seven-day schedule</span>
-                  <span>NYC time</span>
+                  <span>Live at selected hour</span>
+                  <span>NYC time · 7-day window</span>
                 </div>
                 <div className="filter-chips" aria-label="Closure type">
                   {(
@@ -760,7 +766,7 @@ export function MapWorkspace() {
               </div>
               <div className="list-toolbar">
                 <div className="row-between">
-                  <h2>{count.format(visible.length)} closure locations</h2>
+                  <h2>{count.format(visible.length)} active disruptions</h2>
                   <button
                     className="icon-button"
                     title="Refresh closures"
@@ -874,10 +880,10 @@ export function MapWorkspace() {
                   !error && (
                     <div className="empty-state">
                       <Search size={27} />
-                      <h3>No matching closures</h3>
+                      <h3>No live disruptions at this hour</h3>
                       <p>
-                        Try another street, a longer time window, or a wider map
-                        view. Missing reports don’t mean a street is clear.
+                        Try another street or hour. No mapped disruption does
+                        not mean the street is clear.
                       </p>
                       <button
                         className="button secondary"
@@ -944,7 +950,7 @@ export function MapWorkspace() {
           ? "Updating closure data"
           : error
             ? "Closure data could not be refreshed"
-            : `${visible.length} matching closure locations`}
+              : `${visible.length} active disruption locations`}
       </div>
     </div>
   );

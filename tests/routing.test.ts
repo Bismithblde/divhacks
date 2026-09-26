@@ -4,6 +4,7 @@ import type { ClosureFeature } from "../src/lib/closures/types";
 import {
   buildAvoidancePolygons,
   classifyObstacles,
+  coordinateInObstacle,
   routeIntersectsObstacles,
 } from "../src/lib/routing/obstacles";
 import type { RouteFeature } from "../src/lib/routing/types";
@@ -62,7 +63,7 @@ test("route validation normalizes departure and rejects out-of-coverage points",
   assert.equal(invalid.ok, false);
 });
 
-test("only confirmed or explicitly selected closures become hard obstacles", () => {
+test("all mapped disruptions become conservative walk-around obstacles", () => {
   const uncertain = closure("uncertain");
   const confirmed = closure("confirmed", "blocked");
   const classified = classifyObstacles(
@@ -98,6 +99,35 @@ test("avoidance polygons and route verification catch a route through a closure"
     },
   };
   assert.equal(routeIntersectsObstacles(route, [obstacle]), true);
+});
+
+test("endpoint checks follow the street geometry instead of its full bounding box", () => {
+  const diagonal = closure("diagonal");
+  diagonal.geometry = {
+    type: "LineString",
+    coordinates: [
+      [-74.0, 40.7],
+      [-73.9, 40.8],
+    ],
+  };
+  assert.equal(coordinateInObstacle([-73.95, 40.75], diagonal), true);
+  assert.equal(coordinateInObstacle([-73.95, 40.8], diagonal), false);
+});
+
+test("routing rejects an origin or destination inside a walk-around area", async () => {
+  await assert.rejects(
+    () =>
+      findWalkingRoute(
+        {
+          origin: [-74.0, 40.72],
+          destination: [-73.985, 40.73],
+          departureTime: "2026-09-26T16:00:00.000Z",
+          mode: "foot-walking",
+        },
+        [closure("blocked", "blocked")],
+      ),
+    /inside a walk-around disruption/,
+  );
 });
 
 test("walking routing selects the fastest returned route", async () => {
