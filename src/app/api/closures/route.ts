@@ -1,4 +1,7 @@
-import { getClosureSources } from "@/lib/closures/provider";
+import {
+  deduplicateClosureFeatures,
+  getClosureSources,
+} from "@/lib/closures/provider";
 import { overlaps, inBounds } from "@/lib/closures/normalize";
 import type { ClosureResponse } from "@/lib/closures/types";
 
@@ -37,8 +40,9 @@ export async function GET(request: Request) {
     end = start + days * 86_400_000;
   const snapshots = await getClosureSources();
   const sources = snapshots.map((s) => s.status);
-  const features = snapshots
-    .flatMap((s) => s.features)
+  const features = deduplicateClosureFeatures(
+    snapshots.flatMap((s) => s.features),
+  )
     .filter((f) => overlaps(f, start, end) && (!bounds || inBounds(f, bounds)));
   const available = sources.some((s) => s.status !== "unavailable");
   const body: ClosureResponse = {

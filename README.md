@@ -26,6 +26,8 @@ npm start
 - `src/app/api/closures/route.ts`: normalized NYC closure feed.
 - `src/app/api/geocode/route.ts`: bounded server-side NYC destination search.
 - `src/app/api/routes/route.ts`: server-side obstacle-aware walking routes.
+- `src/lib/closures/permitted-events.ts`: supplemental NYC Open Data permitted-event adapter.
+- `src/lib/closures/centerline.ts`: server-side street-name and intersection geometry resolver.
 - `src/app/manifest.ts`: PWA manifest.
 - `src/components/service-worker.tsx`: production-only service worker registration.
 - `public/sw.js`, `public/offline.html`: offline fallback; live API and map data are never cached.
@@ -49,5 +51,15 @@ Never use a `NEXT_PUBLIC_` variable for this key. Without it, the UI remains
 honest and reports that routing and search are unavailable. Search results are
 bounded to the NYC pilot area, and Columbia University is used as the labeled
 demo origin when browser geolocation is unavailable.
+
+## Closure data sources
+
+The mapped ArcGIS street-closure layers remain the primary disruption source.
+The server also supplements them with NYC Open Data’s permitted-event feed
+(`tvpp-9vvx`). Only records with a non-`N/A` street-closure type are considered.
+Because that feed provides text locations rather than geometry, the server
+matches street ranges against NYC’s DCM Street Centerline dataset before
+including them in `/api/closures`. Unresolved records remain counted as
+unmapped and are not presented as route obstacles.
 
 PWA setup follows the [Next.js PWA guide](https://nextjs.org/docs/app/guides/progressive-web-apps).

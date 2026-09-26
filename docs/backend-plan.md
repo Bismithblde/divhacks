@@ -7,7 +7,9 @@ Research date: September 26, 2026. Based on AGENTS.md and PRODUCT.md. This is a 
 - Next.js client component: MapLibre GL JS with OpenFreeMap vector tiles.
 - Next.js route handlers: validated public API and server-side routing adapter.
 - openrouteservice hosted Directions API: `foot-walking` profile with request-specific avoid polygons.
-- Scheduled ingestion: NYC permitted events plus 511NY when a developer key is available; DOT advisories as a reviewed supplement.
+- Server-side feed adapters: NYC permitted events are implemented as a
+  supplemental source; 511NY and reviewed DOT advisories remain future
+  supplements.
 - Durable database: start with SQLite on a single persistent Node server for a local/demo deployment; choose a managed relational database before deploying on stateless/serverless infrastructure. Do not use the serverless filesystem as persistent storage.
 - Admin-reviewed closure geometry and explicitly labeled demo fixtures as a fallback when live sources are unavailable.
 
@@ -39,9 +41,15 @@ Sources: [ORS routing options](https://giscience.github.io/openrouteservice/api-
 
 ## Disruption data options
 
-### NYC permitted events
+### NYC permitted events — implemented supplement
 
-Dataset `tvpp-9vvx` contains approved events in the next month. Inspected live metadata and two API records: update frequency is daily; fields include event ID, dates, agency, borough, event location, and street closure type. Location is text, not a geometry column. Some records are park sports bookings with closure type N/A: these must not become road blocks. Film-event coverage is limited to permits impacting streets for at least five days.
+Dataset `tvpp-9vvx` contains approved events in the next month. The current
+adapter filters out records with closure type `N/A`, parses the NYC-local
+schedule, and resolves street-range text against the DCM Street Centerline
+dataset. Unresolved records are reported as unmapped rather than becoming
+approximate route obstacles. Sidewalk-only permits are vehicle-clear, while
+full street closures are vehicle obstacles; pedestrian access remains
+conservative and source-qualified.
 
 Fetch with pagination and time filters. Preserve source records, interpret local dates with the source timezone, and turn street-between-cross-streets descriptions into matched street segments. Unresolved locations remain approximate map notices, not automatic routing exclusions.
 
@@ -122,5 +130,8 @@ Acceptance checks: known closure causes a valid detour; closure expiration resto
 ## Options to choose
 
 - **Fastest demo:** MapLibre + OpenFreeMap + curated closure GeoJSON + hosted ORS. Smallest build; limited live coverage.
-- **Recommended MVP:** Same map/router + NYC permits + 511NY + reviewed DOT supplements + durable database. Free services within quotas; most work is geometry and data quality.
+- **Recommended MVP:** Same map/router + the implemented NYC permits and
+  centerline resolver, then add 511NY and reviewed DOT supplements with durable
+  storage. Free services within quotas; most remaining work is geometry and
+  data quality.
 - **More control later:** Same frontend + self-hosted regional ORS/Valhalla + ingestion/review pipeline. No routing-provider quota; infrastructure and maintenance costs remain.

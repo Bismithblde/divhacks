@@ -35,8 +35,8 @@ export function validateRouteRequest(body: unknown): RouteValidationResult {
     return { ok: false, error: "A JSON route request is required." };
   }
   const value = body as Partial<RouteRequest>;
-  if (value.mode !== "foot-walking") {
-    return { ok: false, error: "Only walking routes are supported." };
+  if (value.mode !== "foot-walking" && value.mode !== "driving-car") {
+    return { ok: false, error: "Only walking and driving routes are supported." };
   }
   if (!validCoordinate(value.origin) || !inNewYorkCity(value.origin)) {
     return {
@@ -79,7 +79,7 @@ export function validateRouteRequest(body: unknown): RouteValidationResult {
       origin: value.origin,
       destination: value.destination,
       departureTime: new Date(departure).toISOString(),
-      mode: "foot-walking",
+      mode: value.mode,
       avoidClosureIds,
     },
     departure,

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Map,
+  Marker,
   setWorkerUrl,
   AttributionControl,
   ScaleControl,
@@ -122,6 +123,10 @@ type Props = {
   features: ClosureFeature[];
   selected: ClosureFeature | null;
   route: RouteFeature | null;
+  routeLabel: {
+    durationSeconds: number;
+    modeLabel: string;
+  } | null;
   destination: Coordinate | null;
   selectingDestination: boolean;
   onSelect: (id: string) => void;
@@ -134,6 +139,7 @@ export function ClosureMap({
   features,
   selected,
   route,
+  routeLabel,
   destination,
   selectingDestination,
   onSelect,
@@ -143,6 +149,7 @@ export function ClosureMap({
 }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
+  const routeLabelMarker = useRef<Marker | null>(null);
   const currentLocation = useRef<UserLocation | null>(null);
   const heading = useRef<number | null>(null);
   const watchId = useRef<number | null>(null);
@@ -503,6 +510,8 @@ export function ClosureMap({
     return () => {
       clearTimeout(timer);
       observer.disconnect();
+      routeLabelMarker.current?.remove();
+      routeLabelMarker.current = null;
       map.remove();
       mapRef.current = null;
     };
@@ -528,6 +537,43 @@ export function ClosureMap({
       route || empty,
     );
   }, [route, ready]);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map) return;
+
+    if (!route || !routeLabel || route.geometry.coordinates.length === 0) {
+      routeLabelMarker.current?.remove();
+      routeLabelMarker.current = null;
+      return;
+    }
+
+    const coordinates = route.geometry.coordinates;
+    const position = coordinates[Math.floor(coordinates.length / 2)] as Coordinate;
+    let marker = routeLabelMarker.current;
+
+    if (!marker) {
+      const element = document.createElement("div");
+      element.className = "route-map-pill";
+      element.setAttribute("aria-hidden", "true");
+      marker = new Marker({
+        element,
+        anchor: "bottom",
+        offset: [0, -8],
+      })
+        .setLngLat(position)
+        .addTo(map);
+      routeLabelMarker.current = marker;
+    }
+
+    const element = marker.getElement();
+    element.replaceChildren();
+    const strong = document.createElement("strong");
+    strong.textContent = `${Math.max(1, Math.round(routeLabel.durationSeconds / 60))} min`;
+    const span = document.createElement("span");
+    span.textContent = `${routeLabel.modeLabel} estimate`;
+    element.append(strong, span);
+    marker.setLngLat(position);
+  }, [ready, route, routeLabel]);
   useEffect(() => {
     if (!ready) return;
     (
@@ -654,7 +700,7 @@ export function ClosureMap({
     async (requestOrientation: boolean) => {
       if (!navigator.geolocation) {
         setDemoLocation(
-          "Using Columbia University as a demo location because location is unavailable in this browser.",
+          "Location access is unavailable in this browser. You can still browse NYC disruptions.",
         );
         return;
       }
@@ -710,8 +756,8 @@ export function ClosureMap({
           watchId.current = null;
           setDemoLocation(
             error.code === 1
-              ? "Using Columbia University as a demo location. Allow location access to use your current position."
-              : "Using Columbia University as a demo location because your position is unavailable.",
+              ? "Location access was denied. Enable it to center the map on you."
+              : "Your location is unavailable. You can still browse NYC disruptions.",
           );
         },
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 10000 },
@@ -799,7 +845,7 @@ export function ClosureMap({
         </button>
         <button
           className="map-tool"
-          aria-label="Reset map to Columbia demo location"
+          aria-label="Reset map to NYC overview"
           disabled={!ready}
           onClick={() =>
             mapRef.current?.jumpTo({

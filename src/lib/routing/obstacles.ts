@@ -5,6 +5,7 @@ import type {
   ClassifiedObstacles,
   Coordinate,
   RouteFeature,
+  RouteMode,
   RouteWarning,
 } from "./types";
 
@@ -102,27 +103,38 @@ function segmentsDistanceMeters(
 export function classifyObstacles(
   features: ClosureFeature[],
   avoidClosureIds: string[] = [],
+  mode: RouteMode = "foot-walking",
 ): ClassifiedObstacles {
   const requested = new Set(avoidClosureIds);
   const hard: ClosureFeature[] = [];
   const warnings: RouteWarning[] = [];
 
-  if (features.length) {
-    warnings.push({
-      code: "approximate-obstacle",
-      message:
-        "The walk stays off scheduled closures. A closure is a street schedule, not a confirmed sidewalk inspection.",
-    });
-  }
   for (const feature of features) {
     const explicitlyAvoided = requested.has(feature.properties.id);
-    // Open sidewalks stay available. Every other scheduled closure is kept
-    // off the walking line, including one the walker chose to avoid.
-    if (
-      explicitlyAvoided ||
-      feature.properties.pedestrianImpact !== "open"
-    ) {
-      hard.push(feature);
+    const vehicleAccessClear =
+      mode === "driving-car" &&
+      feature.properties.vehicleImpact === "clear";
+    const confirmedImpact =
+      mode === "foot-walking" &&
+      feature.properties.pedestrianImpact === "blocked";
+    if (vehicleAccessClear) continue;
+    // The product policy is conservative: every mapped disruption is a
+    // mode-specific avoidance area. Keep the warning because a scheduled
+    // footprint does not prove current access for the selected travel mode.
+    hard.push(feature);
+    if (!confirmedImpact) {
+      warnings.push({
+        code: "approximate-obstacle",
+        message:
+          mode === "driving-car"
+            ? explicitlyAvoided
+              ? "A selected disruption is being treated as a road obstacle, but current vehicle access has not been confirmed."
+              : "Mapped disruptions are being treated as road obstacles, but current vehicle access has not been confirmed."
+            : explicitlyAvoided
+              ? "A selected disruption is being treated as a walk-around area, but sidewalk access has not been confirmed."
+              : "Mapped disruptions are being treated as walk-around areas, but sidewalk access has not been confirmed.",
+        closureIds: [feature.properties.id],
+      });
     }
   }
   return { hard, warnings: dedupeWarnings(warnings) };
@@ -314,6 +326,61 @@ function segmentNearRoute(
   return false;
 }
 
+function routeIntersectsObstacle(
+  route: RouteFeature,
+  obstacle: ClosureFeature,
+  bufferMeters = 12,
+  allowOriginExit = false,
+) {
+  const routeCoordinates = route.geometry.coordinates;
+  const bounds = expandedBounds(obstacle, bufferMeters);
+  for (let index = 1; index < routeCoordinates.length; index += 1) {
+    const start = routeCoordinates[index - 1] as Coordinate;
+    const end = routeCoordinates[index] as Coordinate;
+    const originExit =
+      allowOriginExit &&
+      index === 1 &&
+      coordinateInObstacle(start, obstacle, bufferMeters) &&
+      !coordinateInObstacle(end, obstacle, bufferMeters);
+    if (originExit) continue;
+    const routeWest = Math.min(start[0], end[0]);
+    const routeEast = Math.max(start[0], end[0]);
+    const routeSouth = Math.min(start[1], end[1]);
+    const routeNorth = Math.max(start[1], end[1]);
+    if (
+      routeEast < bounds[0] ||
+      routeWest > bounds[2] ||
+      routeNorth < bounds[1] ||
+      routeSouth > bounds[3]
+    )
+      continue;
+    if (obstacle.geometry.type === "Point") {
+      if (
+        pointToSegmentDistanceMeters(
+          obstacle.geometry.coordinates as Coordinate,
+          start,
+          end,
+        ) <= bufferMeters
+      )
+        return true;
+      continue;
+    }
+    if (
+      geometrySegments(obstacle.geometry).some(
+        ([obstacleStart, obstacleEnd]) =>
+          segmentsDistanceMeters(
+            start,
+            end,
+            obstacleStart,
+            obstacleEnd,
+          ) <= bufferMeters,
+      )
+    )
+      return true;
+  }
+  return false;
+}
+
 // Keep only the closed segments the current walk would actually meet, so a
 // long permit does not become a city-sized avoid area.
 export function clipObstacleToRoute(
@@ -348,59 +415,29 @@ export function clipObstacleToRoute(
   };
 }
 
+export function obstaclesIntersectedByRoute(
+  route: RouteFeature,
+  obstacles: ClosureFeature[],
+  bufferMeters = 12,
+  allowOriginExit = false,
+) {
+  return obstacles.filter((obstacle) =>
+    routeIntersectsObstacle(route, obstacle, bufferMeters, allowOriginExit),
+  );
+}
+
 export function routeIntersectsObstacles(
   route: RouteFeature,
   obstacles: ClosureFeature[],
   bufferMeters = 12,
   allowOriginExit = false,
 ) {
-  const routeCoordinates = route.geometry.coordinates;
-  return obstacles.some((obstacle) => {
-    const bounds = expandedBounds(obstacle, bufferMeters);
-    for (let index = 1; index < routeCoordinates.length; index += 1) {
-      const start = routeCoordinates[index - 1] as Coordinate;
-      const end = routeCoordinates[index] as Coordinate;
-      const originExit =
-        allowOriginExit &&
-        index === 1 &&
-        coordinateInObstacle(start, obstacle, bufferMeters) &&
-        !coordinateInObstacle(end, obstacle, bufferMeters);
-      if (originExit) continue;
-      const routeWest = Math.min(start[0], end[0]);
-      const routeEast = Math.max(start[0], end[0]);
-      const routeSouth = Math.min(start[1], end[1]);
-      const routeNorth = Math.max(start[1], end[1]);
-      if (
-        routeEast < bounds[0] ||
-        routeWest > bounds[2] ||
-        routeNorth < bounds[1] ||
-        routeSouth > bounds[3]
-      )
-        continue;
-      if (obstacle.geometry.type === "Point") {
-        if (
-          pointToSegmentDistanceMeters(
-            obstacle.geometry.coordinates as Coordinate,
-            start,
-            end,
-          ) <= bufferMeters
-        )
-          return true;
-        continue;
-      }
-      if (
-        geometrySegments(obstacle.geometry).some(
-          ([obstacleStart, obstacleEnd]) =>
-            segmentsDistanceMeters(
-              start,
-              end,
-              obstacleStart,
-              obstacleEnd,
-            ) <= bufferMeters,
-        )
-      )
-        return true;
-    }
-    return false;
-  });
+  return (
+    obstaclesIntersectedByRoute(
+      route,
+      obstacles,
+      bufferMeters,
+      allowOriginExit,
+    ).length > 0
+  );
 }

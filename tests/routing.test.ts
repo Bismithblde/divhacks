@@ -9,7 +9,10 @@ import {
 } from "../src/lib/routing/obstacles";
 import type { RouteFeature } from "../src/lib/routing/types";
 import { validateRouteRequest } from "../src/lib/routing/validation";
-import { findWalkingRoute } from "../src/lib/routing/provider";
+import {
+  findLeastDisruptionRoute,
+  findRoute,
+} from "../src/lib/routing/provider";
 
 function closure(
   id: string,
@@ -54,6 +57,15 @@ test("route validation normalizes departure and rejects out-of-coverage points",
   assert.equal(valid.ok, true);
   if (valid.ok) assert.equal(valid.request.departureTime, "2026-09-26T16:00:00.000Z");
 
+  const driving = validateRouteRequest({
+    origin: [-73.99, 40.73],
+    destination: [-73.97, 40.74],
+    departureTime: "2026-09-26T12:00:00-04:00",
+    mode: "driving-car",
+  });
+  assert.equal(driving.ok, true);
+  if (driving.ok) assert.equal(driving.request.mode, "driving-car");
+
   const invalid = validateRouteRequest({
     origin: [-74.5, 40.73],
     destination: [-73.97, 40.74],
@@ -73,6 +85,22 @@ test("scheduled closures are kept off the walking route", () => {
     ["uncertain", "confirmed", "open"],
   );
   assert.equal(classified.warnings[0]?.code, "approximate-obstacle");
+});
+
+test("vehicle-clear sidewalk permits do not block driving routes", () => {
+  const sidewalk = closure("sidewalk");
+  sidewalk.properties.pedestrianImpact = "blocked";
+  sidewalk.properties.vehicleImpact = "clear";
+  assert.deepEqual(
+    classifyObstacles([sidewalk], [], "driving-car").hard,
+    [],
+  );
+  assert.deepEqual(
+    classifyObstacles([sidewalk], [], "foot-walking").hard.map(
+      (feature) => feature.properties.id,
+    ),
+    ["sidewalk"],
+  );
 });
 
 test("avoidance polygons and route verification catch a route through a closure", () => {
@@ -137,7 +165,7 @@ test("a destination on a closure ends at the nearest open point", async () => {
       { status: 200, headers: { "Content-Type": "application/json" } },
     );
   try {
-    const result = await findWalkingRoute(
+    const result = await findRoute(
       {
         origin: [-74.0, 40.72],
         destination: [-73.985, 40.73],
@@ -192,7 +220,7 @@ test("walking routing selects the fastest returned route", async () => {
     );
 
   try {
-    const result = await findWalkingRoute(
+    const result = await findRoute(
       {
         origin: [-73.99, 40.73],
         destination: [-73.97, 40.74],
@@ -245,7 +273,7 @@ test("walking routing retries when the provider returns a route through a hard o
   };
 
   try {
-    const result = await findWalkingRoute(
+    const result = await findRoute(
       {
         origin: [-74.0, 40.73],
         destination: [-73.97, 40.73],
@@ -257,6 +285,108 @@ test("walking routing retries when the provider returns a route through a hard o
     assert.equal(calls, 2);
     assert.equal(result.verificationAttempts, 2);
     assert.equal(result.route.geometry.coordinates[0][1], 40.72);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.OPENROUTESERVICE_API_KEY;
+    else process.env.OPENROUTESERVICE_API_KEY = originalKey;
+  }
+});
+
+test("fallback routing chooses the route with the fewest interruptions", async () => {
+  const originalKey = process.env.OPENROUTESERVICE_API_KEY;
+  const originalFetch = globalThis.fetch;
+  process.env.OPENROUTESERVICE_API_KEY = "test-key";
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        type: "FeatureCollection",
+        features: [
+          {
+            type: "Feature",
+            geometry: {
+              type: "LineString",
+              coordinates: [
+                [-74.0, 40.73],
+                [-73.97, 40.73],
+              ],
+            },
+            properties: { summary: { duration: 400, distance: 900 } },
+          },
+          {
+            type: "Feature",
+            geometry: {
+              type: "LineString",
+              coordinates: [
+                [-74.0, 40.72],
+                [-73.97, 40.72],
+              ],
+            },
+            properties: { summary: { duration: 700, distance: 1100 } },
+          },
+        ],
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+
+  try {
+    const result = await findLeastDisruptionRoute(
+      {
+        origin: [-74.0, 40.73],
+        destination: [-73.97, 40.73],
+        departureTime: "2026-09-26T16:00:00.000Z",
+        mode: "foot-walking",
+      },
+      [closure("blocked", "blocked")],
+    );
+    assert.equal(result?.crossed.length, 0);
+    assert.equal(result?.route.properties.durationSeconds, 700);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.OPENROUTESERVICE_API_KEY;
+    else process.env.OPENROUTESERVICE_API_KEY = originalKey;
+  }
+});
+
+test("driving routing uses the car profile", async () => {
+  const originalKey = process.env.OPENROUTESERVICE_API_KEY;
+  const originalFetch = globalThis.fetch;
+  process.env.OPENROUTESERVICE_API_KEY = "test-key";
+  let requestedUrl = "";
+  globalThis.fetch = async (input) => {
+    requestedUrl = String(input);
+    return new Response(
+      JSON.stringify({
+        type: "FeatureCollection",
+        features: [
+          {
+            type: "Feature",
+            geometry: {
+              type: "LineString",
+              coordinates: [
+                [-73.99, 40.73],
+                [-73.97, 40.74],
+              ],
+            },
+            properties: { summary: { duration: 480, distance: 2200 } },
+          },
+        ],
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  try {
+    const result = await findRoute(
+      {
+        origin: [-73.99, 40.73],
+        destination: [-73.97, 40.74],
+        departureTime: "2026-09-26T16:00:00.000Z",
+        mode: "driving-car",
+      },
+      [],
+    );
+    assert.match(requestedUrl, /directions\/driving-car\/geojson$/);
+    assert.equal(result.route.properties.durationSeconds, 480);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalKey === undefined) delete process.env.OPENROUTESERVICE_API_KEY;

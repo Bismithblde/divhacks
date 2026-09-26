@@ -2,7 +2,7 @@ import type { Feature, LineString, MultiPolygon } from "geojson";
 import type { ClosureFeature } from "@/lib/closures/types";
 
 export type Coordinate = [number, number];
-export type RouteMode = "foot-walking";
+export type RouteMode = "foot-walking" | "driving-car";
 
 export type RouteRequest = {
   origin: Coordinate;
@@ -17,6 +17,7 @@ export type RouteWarning = {
     | "uncertain-pedestrian-impact"
     | "incomplete-coverage"
     | "approximate-obstacle"
+    | "interruption-fallback"
     | "provider-limited";
   message: string;
   closureIds?: string[];
@@ -38,9 +39,12 @@ export type RouteFeature = Feature<
 
 export type RouteResponse = {
   status: "ok" | "unavailable" | "no-route" | "invalid";
+  routeStatus?: "clear" | "fallback";
   route?: RouteFeature;
   durationSeconds?: number;
   distanceMeters?: number;
+  alternative?: RouteAlternative;
+  crossedClosures?: AvoidedClosure[];
   avoidedClosures: AvoidedClosure[];
   warnings: RouteWarning[];
   error?: string;
@@ -52,6 +56,15 @@ export type RouteResponse = {
     dataComplete: boolean;
     verificationAttempts: number;
   };
+};
+
+export type RouteAlternative = {
+  label: "faster-with-disruptions";
+  route: RouteFeature;
+  durationSeconds: number;
+  distanceMeters: number;
+  crossedClosures: AvoidedClosure[];
+  timeSavedSeconds: number;
 };
 
 export type AvoidancePolygon = {

@@ -46,6 +46,22 @@ test("real NYC feeds render; filter, inspect, search, and change time window", a
     path: `.impeccable/review/${testInfo.project.name}.png`,
     fullPage: true,
   });
+  if (testInfo.project.name === "desktop") {
+    await expect(
+      page.getByRole("button", { name: "Hide closures sidebar" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Hide closures sidebar" }).click();
+    await expect(
+      page.getByRole("button", { name: "Show closures sidebar" }),
+    ).toBeVisible();
+    await expect(page.locator(".closure-panel")).toHaveClass(
+      /sidebar-collapsed/,
+    );
+    await page.getByRole("button", { name: "Show closures sidebar" }).click();
+    await expect(
+      page.getByRole("button", { name: "Hide closures sidebar" }),
+    ).toBeVisible();
+  }
   if (testInfo.project.name === "mobile")
     await page
       .getByRole("button", { name: "Expand closure panel", exact: true })
@@ -160,9 +176,8 @@ test("searches an NYC destination and places it on the map", async ({ page }) =>
   if (await page.getByRole("button", { name: "Expand closure panel", exact: true }).count())
     await page.getByRole("button", { name: "Expand closure panel", exact: true }).click();
   await page
-    .getByLabel("Or search an NYC address or place")
+    .getByRole("combobox", { name: "Where to go?" })
     .fill("Columbia University");
-  await page.getByRole("button", { name: "Search", exact: true }).click();
   await expect(
     page.getByRole("button", {
       name: "Columbia University, New York, NY",
@@ -180,10 +195,30 @@ test("searches an NYC destination and places it on the map", async ({ page }) =>
   ).toBeVisible();
 });
 
-test("selects a destination and renders a verified walking route", async ({
+test("selects a destination and renders verified walking and driving routes", async ({
   page,
 }) => {
+  const requestedModes: string[] = [];
+  await page.route("**/api/geocode?*", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        results: [
+          {
+            id: "way/columbia",
+            label: "Columbia University, New York, NY",
+            coordinate: [-73.9626, 40.8075],
+          },
+        ],
+      }),
+    });
+  });
   await page.route("**/api/routes", async (route) => {
+    const requestBody = JSON.parse(route.request().postData() || "{}") as {
+      mode?: string;
+    };
+    requestedModes.push(requestBody.mode || "");
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -206,6 +241,37 @@ test("selects a destination and renders a verified walking route", async ({
         },
         durationSeconds: 600,
         distanceMeters: 1200,
+        alternative: {
+          label: "faster-with-disruptions",
+          route: {
+            type: "Feature",
+            geometry: {
+              type: "LineString",
+              coordinates: [
+                [-73.9626, 40.8075],
+                [-73.968, 40.79],
+              ],
+            },
+            properties: {
+              provider: "test",
+              durationSeconds: 300,
+              distanceMeters: 700,
+            },
+          },
+          durationSeconds: 300,
+          distanceMeters: 700,
+          crossedClosures: [
+            {
+              id: "events-demo",
+              title: "Demo parade",
+              kind: "event",
+              start: Date.now(),
+              end: Date.now() + 3600000,
+              sourceUrl: "https://example.com/source",
+            },
+          ],
+          timeSavedSeconds: 300,
+        },
         avoidedClosures: [],
         warnings: [
           {
@@ -233,19 +299,53 @@ test("selects a destination and renders a verified walking route", async ({
   );
   if (await page.getByRole("button", { name: "Expand closure panel", exact: true }).count())
     await page.getByRole("button", { name: "Expand closure panel", exact: true }).click();
-  await page.getByRole("button", { name: "Choose destination on map", exact: true }).click();
-  const canvas = page.locator(".maplibregl-canvas");
-  const box = await canvas.boundingBox();
-  await canvas.click({ position: { x: box!.width / 2, y: box!.height / 2 } });
+  await page.getByRole("combobox", { name: "Where to go?" }).fill("Columbia");
+  await page
+    .getByRole("button", {
+      name: "Columbia University, New York, NY",
+      exact: true,
+    })
+    .click();
   await expect(page.getByText(/^To /)).toBeVisible();
-  await page.getByRole("button", { name: "Find fastest clear walk", exact: true }).click();
-  await expect(page.getByText("About 10 min walking")).toBeVisible();
+  await page.getByRole("button", { name: "Find clearest walk", exact: true }).click();
+  await expect(page.locator(".route-map-pill")).toContainText("10 min");
   await expect(page.getByText(/walking access has not been confirmed/)).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Use faster route anyway", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Use faster route anyway", exact: true })
+    .click();
+  await expect(page.locator(".route-map-pill")).toContainText("5 min");
+  expect(requestedModes).toEqual(["foot-walking"]);
+  await page.getByRole("button", { name: "Travel mode: walk", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: "Drive", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Find clearest drive", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Find clearest drive", exact: true }).click();
+  await expect(page.locator(".route-map-pill")).toContainText("10 min");
+  expect(requestedModes).toEqual(["foot-walking", "driving-car"]);
 });
 
 test("does not render a route when walking directions are unavailable", async ({
   page,
 }) => {
+  await page.route("**/api/geocode?*", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        results: [
+          {
+            id: "way/columbia",
+            label: "Columbia University, New York, NY",
+            coordinate: [-73.9626, 40.8075],
+          },
+        ],
+      }),
+    });
+  });
   await page.route("**/api/routes", async (route) => {
     await route.fulfill({
       status: 200,
@@ -274,11 +374,14 @@ test("does not render a route when walking directions are unavailable", async ({
   );
   if (await page.getByRole("button", { name: "Expand closure panel", exact: true }).count())
     await page.getByRole("button", { name: "Expand closure panel", exact: true }).click();
-  await page.getByRole("button", { name: "Choose destination on map", exact: true }).click();
-  const canvas = page.locator(".maplibregl-canvas");
-  const box = await canvas.boundingBox();
-  await canvas.click({ position: { x: box!.width / 2, y: box!.height / 2 } });
-  await page.getByRole("button", { name: "Find fastest clear walk", exact: true }).click();
+  await page.getByRole("combobox", { name: "Where to go?" }).fill("Columbia");
+  await page
+    .getByRole("button", {
+      name: "Columbia University, New York, NY",
+      exact: true,
+    })
+    .click();
+  await page.getByRole("button", { name: "Find clearest walk", exact: true }).click();
   await expect(page.locator(".route-error")).toHaveText(
     "No verified walking route is available.",
   );
@@ -342,7 +445,7 @@ test('map controls work and out-of-coverage geolocation gives useful feedback', 
   await expect(page.getByText('You’re outside NYC. This map currently covers the five boroughs.')).toBeVisible();
   await page.getByRole('button',{name:'Dismiss',exact:true}).click();
   await expect(page.locator('.map-notice')).toHaveCount(0);
-  await page.getByRole('button',{name:'Reset map to Columbia demo location'}).click();
+  await page.getByRole('button',{name:'Reset map to NYC overview'}).click();
   await expect(scale).not.toHaveText(initial!);
   if(testInfo.project.name==='mobile') {
     await page.getByRole('button',{name:/^Show all/}).click();

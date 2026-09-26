@@ -1,5 +1,10 @@
 import type { FeatureCollection } from "geojson";
-import type { Coordinate, RouteRequest, RouteFeature } from "./types";
+import type {
+  Coordinate,
+  RouteMode,
+  RouteRequest,
+  RouteFeature,
+} from "./types";
 import {
   buildAvoidancePolygons,
   clipObstacleToRoute,
@@ -9,12 +14,27 @@ import {
 } from "./obstacles";
 import type { ClosureFeature } from "@/lib/closures/types";
 
-const OPENROUTESERVICE_URL =
-  "https://api.openrouteservice.org/v2/directions/foot-walking/geojson";
+const OPENROUTESERVICE_URL: Record<RouteMode, string> = {
+  "foot-walking":
+    "https://api.openrouteservice.org/v2/directions/foot-walking/geojson",
+  "driving-car":
+    "https://api.openrouteservice.org/v2/directions/driving-car/geojson",
+};
 const REQUEST_TIMEOUT_MS = 20_000;
 const CROSSING_METERS = 12;
 const AVOID_BUFFER_METERS = 18;
 const MAX_AVOID_POLYGONS = 80;
+const MAX_ACCEPTED_DISRUPTIONS = 2;
+
+function modeLabel(mode: RouteMode) {
+  return mode === "driving-car" ? "driving" : "walking";
+}
+
+function impactIsBlocked(obstacle: ClosureFeature, mode: RouteMode) {
+  return mode === "driving-car"
+    ? obstacle.properties.vehicleImpact === "blocked"
+    : obstacle.properties.pedestrianImpact === "blocked";
+}
 
 export class RouteProviderError extends Error {
   constructor(
@@ -76,7 +96,7 @@ async function requestRoutes(
   const key = process.env.OPENROUTESERVICE_API_KEY;
   if (!key) {
     throw new RouteProviderError(
-      "Walking routing is not configured on this server.",
+      `${modeLabel(request.mode)} routing is not configured on this server.`,
       "unavailable",
     );
   }
@@ -96,7 +116,7 @@ async function requestRoutes(
 
   let response: Response;
   try {
-    response = await fetch(OPENROUTESERVICE_URL, {
+    response = await fetch(OPENROUTESERVICE_URL[request.mode], {
       method: "POST",
       headers: {
         Authorization: key,
@@ -108,21 +128,21 @@ async function requestRoutes(
     });
   } catch {
     throw new RouteProviderError(
-      "The walking routing provider could not be reached.",
+      `The ${modeLabel(request.mode)} routing provider could not be reached.`,
       "unavailable",
     );
   }
   if (response.status === 404 || response.status === 406) {
     throw new RouteProviderError(
-      "The routing provider could not find a walking route.",
+      `The routing provider could not find a ${modeLabel(request.mode)} route.`,
       "no-route",
     );
   }
   if (!response.ok) {
     throw new RouteProviderError(
       response.status === 400
-        ? "No walking route stays off the scheduled closures."
-        : "The walking routing provider returned an error.",
+        ? `No ${modeLabel(request.mode)} route stays off the scheduled closures.`
+        : `The ${modeLabel(request.mode)} routing provider returned an error.`,
       response.status === 400 ? "no-route" : "unavailable",
     );
   }
@@ -131,14 +151,14 @@ async function requestRoutes(
     body = (await response.json()) as ProviderFeatureCollection;
   } catch {
     throw new RouteProviderError(
-      "The routing provider returned unreadable route data.",
+      `The ${modeLabel(request.mode)} routing provider returned unreadable route data.`,
       "invalid",
     );
   }
   const routes = parseRoutes(body);
   if (!routes.length) {
     throw new RouteProviderError(
-      "The routing provider returned no walking route.",
+      `The routing provider returned no ${modeLabel(request.mode)} route.`,
       "no-route",
     );
   }
@@ -199,7 +219,7 @@ function avoidableClosures(
   return kept;
 }
 
-export async function findWalkingRoute(
+export async function findRoute(
   request: RouteRequest,
   hardObstacles: ClosureFeature[],
 ): Promise<{
@@ -215,7 +235,7 @@ export async function findWalkingRoute(
   );
   if (!openDestination) {
     throw new RouteProviderError(
-      "That point is inside a scheduled closure. Choose a point on an open street.",
+      `That point is inside a scheduled ${modeLabel(request.mode)} disruption. Choose a point on an open street.`,
       "no-route",
     );
   }
@@ -282,8 +302,82 @@ export async function findWalkingRoute(
   ].slice(0, 3);
   throw new RouteProviderError(
     names.length
-      ? `No walk stays off the scheduled closure on ${names.join(", ")}.`
-      : "No walking route stays off the scheduled closures between these points.",
+      ? `No ${modeLabel(request.mode)} route stays off the scheduled closure on ${names.join(", ")}.`
+      : `No ${modeLabel(request.mode)} route stays off the scheduled closures between these points.`,
     "no-route",
   );
+}
+
+export async function findFasterDisruptionRoute(
+  request: RouteRequest,
+  obstacles: ClosureFeature[],
+) {
+  if (
+    obstacles.some((obstacle) =>
+      coordinateInObstacle(request.destination, obstacle),
+    )
+  )
+    return null;
+  const routes = await requestRoutes(request, [], 0);
+  const candidates = routes
+    .map((route) => ({
+      route,
+      crossed: crossings(route, obstacles, request),
+    }))
+    .filter(
+      ({ crossed }) =>
+        crossed.length > 0 &&
+        crossed.length <= MAX_ACCEPTED_DISRUPTIONS &&
+        crossed.every(
+          (obstacle) => !impactIsBlocked(obstacle, request.mode),
+        ),
+    )
+    .sort(
+      (a, b) =>
+        a.route.properties.durationSeconds -
+        b.route.properties.durationSeconds,
+    );
+  const candidate = candidates[0];
+  return candidate
+    ? { route: candidate.route, crossed: candidate.crossed }
+    : null;
+}
+
+export async function findLeastDisruptionRoute(
+  request: RouteRequest,
+  obstacles: ClosureFeature[],
+) {
+  if (
+    obstacles.some((obstacle) =>
+      coordinateInObstacle(request.destination, obstacle),
+    )
+  ) {
+    return null;
+  }
+  const routes = await requestRoutes(request, [], 0);
+  const candidates = routes
+    .map((route) => ({
+      route,
+      crossed: crossings(route, obstacles, request),
+    }))
+    .sort((a, b) => {
+      const countDifference = a.crossed.length - b.crossed.length;
+      if (countDifference) return countDifference;
+      const blockedDifference =
+        b.crossed.filter(
+          (obstacle) => impactIsBlocked(obstacle, request.mode),
+        ).length -
+        a.crossed.filter(
+          (obstacle) => impactIsBlocked(obstacle, request.mode),
+        ).length;
+      return (
+        blockedDifference ||
+        a.route.properties.durationSeconds -
+          b.route.properties.durationSeconds
+      );
+    });
+  const candidate = candidates[0];
+  return candidate
+    ? { route: candidate.route, crossed: candidate.crossed }
+    : null;
 }

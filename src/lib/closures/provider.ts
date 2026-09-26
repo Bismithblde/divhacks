@@ -1,9 +1,11 @@
 import {
+  geometryBounds,
   normalizeFeature,
   SOURCE_ROOT,
   SOURCES,
   type SourceDefinition,
 } from "./normalize";
+import { loadPermittedEventSource } from "./permitted-events";
 import type { ClosureFeature, SourceStatus } from "./types";
 
 const TTL = 5 * 60_000;
@@ -159,5 +161,61 @@ async function load(source: SourceDefinition): Promise<Snapshot> {
   return job;
 }
 export async function getClosureSources() {
-  return Promise.all(SOURCES.map(load));
+  return Promise.all([
+    ...SOURCES.map(load),
+    loadPermittedEventSource(),
+  ]);
+}
+
+function comparableText(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function boxesOverlap(first: ClosureFeature, second: ClosureFeature) {
+  const [firstWest, firstSouth, firstEast, firstNorth] = geometryBounds(
+    first.geometry,
+  );
+  const [secondWest, secondSouth, secondEast, secondNorth] = geometryBounds(
+    second.geometry,
+  );
+  return (
+    firstEast >= secondWest &&
+    secondEast >= firstWest &&
+    firstNorth >= secondSouth &&
+    secondNorth >= firstSouth
+  );
+}
+
+function duplicateOfPrimary(
+  feature: ClosureFeature,
+  primary: ClosureFeature[],
+) {
+  if (feature.properties.source !== "NYC permitted events") return false;
+  const title = comparableText(feature.properties.title);
+  const location = comparableText(feature.properties.location);
+  return primary.some((candidate) => {
+    if (
+      candidate.properties.kind !== "event" ||
+      !boxesOverlap(feature, candidate) ||
+      candidate.properties.end < feature.properties.start ||
+      feature.properties.end < candidate.properties.start
+    )
+      return false;
+    const sameTitle =
+      title.length > 4 &&
+      title === comparableText(candidate.properties.title);
+    const sameLocation =
+      location.length > 8 &&
+      location === comparableText(candidate.properties.location);
+    return sameTitle || sameLocation;
+  });
+}
+
+export function deduplicateClosureFeatures(features: ClosureFeature[]) {
+  const primary = features.filter(
+    (feature) => feature.properties.source !== "NYC permitted events",
+  );
+  return features.filter(
+    (feature) => !duplicateOfPrimary(feature, primary),
+  );
 }

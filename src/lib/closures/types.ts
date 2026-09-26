@@ -23,6 +23,7 @@ export type ClosureProperties = {
   source: string;
   sourceUrl: string;
   pedestrianImpact: "unknown" | "blocked" | "open";
+  vehicleImpact?: "unknown" | "blocked" | "clear";
 };
 export type ClosureFeature = Feature<ClosureGeometry, ClosureProperties>;
 export type SourceStatus = {

@@ -138,6 +138,7 @@ export function normalizeFeature(
     source: source.label,
     sourceUrl: `${SOURCE_ROOT}${source.path}`,
     pedestrianImpact: "unknown",
+    vehicleImpact: "unknown",
   };
   return {
     type: "Feature",

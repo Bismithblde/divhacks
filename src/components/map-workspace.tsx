@@ -5,6 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import {
   type FormEvent,
+  type KeyboardEvent,
   useCallback,
   useDeferredValue,
   useEffect,
@@ -14,8 +15,10 @@ import {
 import {
   ArrowLeft,
   ArrowUpRight,
+  Car,
   CalendarDays,
   Check,
+  ChevronLeft,
   ChevronDown,
   ChevronRight,
   ChevronUp,
@@ -45,6 +48,7 @@ import {
 } from "@/lib/closures/time";
 import type {
   Coordinate,
+  RouteMode,
   RouteResponse,
   RouteFeature,
 } from "@/lib/routing/types";
@@ -86,6 +90,7 @@ export function MapWorkspace() {
   const [bounds, setBounds] = useState<number[] | null>(null);
   const [onlyVisible, setOnlyVisible] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [limit, setLimit] = useState(40);
   const [fitRequest, setFitRequest] = useState(0);
@@ -101,15 +106,19 @@ export function MapWorkspace() {
   const [destinationSearchLoading, setDestinationSearchLoading] =
     useState(false);
   const [destinationSearchError, setDestinationSearchError] = useState("");
+  const [destinationActiveIndex, setDestinationActiveIndex] = useState(-1);
   const [avoidClosureIds, setAvoidClosureIds] = useState<string[]>([]);
   const [route, setRoute] = useState<RouteFeature | null>(null);
   const [routeResponse, setRouteResponse] = useState<RouteResponse | null>(
     null,
   );
+  const [usingAlternative, setUsingAlternative] = useState(false);
+  const [routeMode, setRouteMode] = useState<RouteMode>("foot-walking");
+  const [routeModeMenuOpen, setRouteModeMenuOpen] = useState(false);
   const [routeLoading, setRouteLoading] = useState(false);
   const [routeError, setRouteError] = useState("");
-  const [usingDemoLocation, setUsingDemoLocation] = useState(true);
   const [departureTime, setDepartureTime] = useState("");
+  const routeModeLabel = routeMode === "driving-car" ? "driving" : "walking";
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -240,6 +249,15 @@ export function MapWorkspace() {
     setDepartureTime(newYorkDateTimeInput(value, timelineAnchor ?? 0));
     setRoute(null);
     setRouteResponse(null);
+    setUsingAlternative(false);
+    setRouteError("");
+  };
+  const changeRouteMode = (mode: RouteMode) => {
+    setRouteMode(mode);
+    setRouteModeMenuOpen(false);
+    setRoute(null);
+    setRouteResponse(null);
+    setUsingAlternative(false);
     setRouteError("");
   };
   const onDestination = useCallback((coordinate: Coordinate) => {
@@ -250,6 +268,7 @@ export function MapWorkspace() {
     setDestinationSearchError("");
     setRoute(null);
     setRouteResponse(null);
+    setUsingAlternative(false);
     setRouteError("");
     setExpanded(true);
   }, []);
@@ -263,43 +282,117 @@ export function MapWorkspace() {
     }
     return body.results;
   };
-  const searchForDestination = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+
+  useEffect(() => {
+    if (destination) return;
+
     const query = destinationSearch.trim();
-    if (query.length < 2) {
-      setDestinationSearchError("Enter at least 2 characters to search.");
-      setDestinationResults([]);
-      return;
-    }
-    setDestinationSearchLoading(true);
-    setDestinationSearchError("");
-    setDestinationResults([]);
-    try {
-      const results = await lookupPlaces(query);
-      setDestinationResults(results);
-      if (!results.length) {
-        setDestinationSearchError("No NYC places matched that search.");
+    if (query.length < 2) return;
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setDestinationSearchLoading(true);
+      setDestinationSearchError("");
+      try {
+        const response = await fetch(
+          `/api/geocode?q=${encodeURIComponent(query)}`,
+          { signal: controller.signal },
+        );
+        const body = (await response.json()) as GeocodeResponse;
+        if (!response.ok) {
+          throw new Error(
+            body.error || "Address search is unavailable right now.",
+          );
+        }
+        if (controller.signal.aborted) return;
+        setDestinationResults(body.results);
+        setDestinationActiveIndex(-1);
+        if (!body.results.length) {
+          setDestinationSearchError("No NYC places matched that search.");
+        }
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setDestinationSearchError(
+          error instanceof Error
+            ? error.message
+            : "Address search is unavailable right now.",
+        );
+        setDestinationResults([]);
+      } finally {
+        if (!controller.signal.aborted) setDestinationSearchLoading(false);
       }
-    } catch (error) {
-      setDestinationSearchError(
-        error instanceof Error
-          ? error.message
-          : "Address search is unavailable right now.",
-      );
-    } finally {
-      setDestinationSearchLoading(false);
-    }
-  };
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [destination, destinationSearch]);
+
   const chooseDestinationResult = (result: GeocodeResult) => {
     setDestination(result.coordinate);
     setDestinationLabel(result.label);
+    setDestinationSearch(result.label);
     setSelectingDestination(false);
     setDestinationResults([]);
     setDestinationSearchError("");
+    setDestinationActiveIndex(-1);
     setRoute(null);
     setRouteResponse(null);
+    setUsingAlternative(false);
     setRouteError("");
     setExpanded(true);
+  };
+  const handleDestinationChange = (value: string) => {
+    setDestinationSearch(value);
+    setDestination(null);
+    setDestinationLabel("");
+    setDestinationResults([]);
+    setDestinationSearchError("");
+    setDestinationActiveIndex(-1);
+    setRoute(null);
+    setRouteResponse(null);
+    setUsingAlternative(false);
+    setRouteError("");
+  };
+  const handleDestinationKeyDown = (
+    event: KeyboardEvent<HTMLInputElement>,
+  ) => {
+    if (event.key === "ArrowDown" && destinationResults.length > 0) {
+      event.preventDefault();
+      setDestinationActiveIndex(
+        (index) => (index + 1) % destinationResults.length,
+      );
+    } else if (event.key === "ArrowUp" && destinationResults.length > 0) {
+      event.preventDefault();
+      setDestinationActiveIndex(
+        (index) =>
+          (index - 1 + destinationResults.length) % destinationResults.length,
+      );
+    } else if (
+      event.key === "Enter" &&
+      destinationActiveIndex >= 0 &&
+      destinationResults[destinationActiveIndex]
+    ) {
+      event.preventDefault();
+      chooseDestinationResult(destinationResults[destinationActiveIndex]);
+    } else if (event.key === "Escape") {
+      setDestinationResults([]);
+      setDestinationActiveIndex(-1);
+    }
+  };
+  const handleDestinationSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (destination) {
+      void requestRoute();
+    } else if (
+      destinationActiveIndex >= 0 &&
+      destinationResults[destinationActiveIndex]
+    ) {
+      chooseDestinationResult(destinationResults[destinationActiveIndex]);
+    } else if (destinationResults.length === 1) {
+      chooseDestinationResult(destinationResults[0]);
+    }
   };
   const requestRoute = async () => {
     let target = destination;
@@ -353,6 +446,7 @@ export function MapWorkspace() {
     setRouteLoading(true);
     setRoute(null);
     setRouteResponse(null);
+    setUsingAlternative(false);
     setRouteError("");
     try {
       let origin: Coordinate;
@@ -366,10 +460,8 @@ export function MapWorkspace() {
             }),
         );
         origin = [position.coords.longitude, position.coords.latitude];
-        setUsingDemoLocation(false);
       } catch {
         origin = [DEMO_LOCATION.longitude, DEMO_LOCATION.latitude];
-        setUsingDemoLocation(true);
       }
       const response = await fetch("/api/routes", {
         method: "POST",
@@ -378,7 +470,7 @@ export function MapWorkspace() {
           origin,
           destination: target,
           departureTime: departure,
-          mode: "foot-walking",
+          mode: routeMode,
           avoidClosureIds,
         }),
       });
@@ -387,14 +479,15 @@ export function MapWorkspace() {
       if (!response.ok || body.status !== "ok" || !body.route) {
         setRouteError(
           body.error ||
-            "A verified walking route is not available right now.",
+            `A verified ${routeModeLabel} route is not available right now.`,
         );
       } else {
         setRoute(body.route);
+      setUsingAlternative(false);
       }
     } catch {
       setRouteError(
-        "Your location or the walking route was unavailable. Check permissions and try again.",
+        `Your location or the ${routeModeLabel} route was unavailable. Check permissions and try again.`,
       );
     } finally {
       setRouteLoading(false);
@@ -402,6 +495,21 @@ export function MapWorkspace() {
   };
   const sourceWarning = data?.meta.sources.some(
     (s) => s.status !== "ok" || s.unmapped > 0,
+  );
+  const displayedDurationSeconds =
+    usingAlternative && routeResponse?.alternative
+      ? routeResponse.alternative.durationSeconds
+      : routeResponse?.durationSeconds;
+  const routeLabel = useMemo(
+    () =>
+      routeResponse?.status === "ok" &&
+      displayedDurationSeconds !== undefined
+        ? {
+            durationSeconds: displayedDurationSeconds,
+            modeLabel: routeModeLabel,
+          }
+        : null,
+    [displayedDurationSeconds, routeModeLabel, routeResponse?.status],
   );
 
   return (
@@ -438,10 +546,6 @@ export function MapWorkspace() {
             Data sources
           </button>
         </nav>
-        <div className="walking-label">
-          <Footprints size={17} />
-          <span>Walking first</span>
-        </div>
       </header>
       <main className="workspace">
         <section className="map-region" aria-label="Closure map">
@@ -449,6 +553,7 @@ export function MapWorkspace() {
             features={filtered}
             selected={selected}
             route={route}
+            routeLabel={routeLabel}
             destination={destination}
             selectingDestination={selectingDestination}
             onSelect={onSelect}
@@ -456,6 +561,39 @@ export function MapWorkspace() {
             onBounds={onBounds}
             fitRequest={fitRequest}
           />
+          <div
+            className={`route-planner map-route-planner ${
+              sidebarOpen ? "sidebar-open" : "sidebar-collapsed"
+            }`}
+          >
+            <DestinationSearch
+              value={destinationSearch}
+              loading={destinationSearchLoading}
+              error={destinationSearchError}
+              results={destinationResults}
+              activeIndex={destinationActiveIndex}
+              onChange={handleDestinationChange}
+              onKeyDown={handleDestinationKeyDown}
+              onSubmit={handleDestinationSubmit}
+              onChoose={chooseDestinationResult}
+              routeMode={routeMode}
+              modeMenuOpen={routeModeMenuOpen}
+              onToggleMode={() => setRouteModeMenuOpen((open) => !open)}
+              onModeChange={changeRouteMode}
+              canSubmit={Boolean(destination || destinationResults.length)}
+              routeLoading={routeLoading}
+            />
+          </div>
+          {!sidebarOpen && (
+            <button
+              className="sidebar-toggle"
+              type="button"
+              aria-label="Show closures sidebar"
+              onClick={() => setSidebarOpen(true)}
+            >
+              <ChevronRight size={18} />
+            </button>
+          )}
           {(error || sourceWarning) && (
             <button
               className="map-data-warning"
@@ -501,7 +639,9 @@ export function MapWorkspace() {
         <aside
           id="closure-panel"
           tabIndex={-1}
-          className={`closure-panel ${expanded ? "expanded" : ""}`}
+          className={`closure-panel ${expanded ? "expanded" : ""} ${
+            sidebarOpen ? "" : "sidebar-collapsed"
+          }`}
           aria-label="Closures and events"
         >
           <button
@@ -516,6 +656,16 @@ export function MapWorkspace() {
             <span className="sr-only">{expanded ? "Collapse" : "Expand"}</span>
             {expanded ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
           </button>
+          {sidebarOpen && (
+            <button
+              className="sidebar-close"
+              type="button"
+              aria-label="Hide closures sidebar"
+              onClick={() => setSidebarOpen(false)}
+            >
+              <ChevronLeft size={18} />
+            </button>
+          )}
           {sourcesOpen ? (
             <>
               <div className="panel-heading">
@@ -598,17 +748,90 @@ export function MapWorkspace() {
             />
           ) : (
             <>
-              <div className="panel-heading">
-                <div className="row-between">
-                  <h1>Explore closures</h1>
-                  <span className="heading-icon">
-                    <Footprints size={25} />
-                  </span>
+              <h1 className="sr-only">Current disruptions</h1>
+              {destination && (
+                <div className="route-planner route-details">
+                    <p className="route-destination">
+                      To{" "}
+                      {destinationLabel || "Selected destination"}
+                    </p>
+                    <label htmlFor="route-departure">Departure · NYC time</label>
+                    <input
+                      id="route-departure"
+                      type="datetime-local"
+                      value={departureTime}
+                      onChange={(event) => {
+                        setDepartureTime(event.target.value);
+                        setRoute(null);
+                        setRouteResponse(null);
+                        setUsingAlternative(false);
+                        setRouteError("");
+                      }}
+                    />
+                    {routeError && (
+                      <p className="route-error" role="alert">
+                        {routeError}
+                      </p>
+                    )}
+                    {routeResponse?.status === "ok" &&
+                      routeResponse.alternative &&
+                      !usingAlternative && (
+                        <div className="route-alternative">
+                          <p>
+                            Save{" "}
+                            {Math.max(
+                              1,
+                              Math.round(
+                                routeResponse.alternative.timeSavedSeconds / 60,
+                              ),
+                            )}{" "}
+                            min by crossing{" "}
+                            {routeResponse.alternative.crossedClosures.length}{" "}
+                            mapped disruption
+                            {routeResponse.alternative.crossedClosures.length ===
+                            1
+                              ? ""
+                              : "s"}
+                            .
+                          </p>
+                          <button
+                            className="button secondary"
+                            onClick={() => {
+                              setRoute(routeResponse.alternative!.route);
+                              setUsingAlternative(true);
+                            }}
+                          >
+                            Use faster route anyway
+                          </button>
+                        </div>
+                      )}
+                    {routeResponse?.status === "ok" &&
+                      routeResponse.alternative &&
+                      usingAlternative && (
+                        <button
+                          className="text-button route-clear-alternative"
+                          onClick={() => {
+                            setRoute(routeResponse.route || null);
+                            setUsingAlternative(false);
+                          }}
+                        >
+                          Use recommended clear route
+                        </button>
+                      )}
+                    {routeResponse?.warnings.map((warning) => (
+                      <p className="route-warning" key={warning.code}>
+                        {warning.message}
+                      </p>
+                    ))}
+                    {routeResponse?.avoidedClosures.length ? (
+                      <p className="route-avoided">
+                        Avoiding {routeResponse.avoidedClosures.length} mapped
+                        obstacle
+                        {routeResponse.avoidedClosures.length === 1 ? "" : "s"}.
+                      </p>
+                    ) : null}
                 </div>
-              </div>
-              <p className="mobile-uncertainty">
-                Scheduled closures · Walking access unconfirmed
-              </p>
+              )}
               <div className="filters">
                 <label className="search-label" htmlFor="closure-search">
                   Find a street or event
@@ -663,155 +886,9 @@ export function MapWorkspace() {
                   ))}
                 </div>
               </div>
-              <div className="route-planner">
-                <div className="row-between">
-                  <h2>Plan a walk</h2>
-                  {destination && (
-                    <button
-                      className="text-button"
-                      onClick={() => {
-                        setDestination(null);
-                        setDestinationLabel("");
-                        setRoute(null);
-                        setRouteResponse(null);
-                        setRouteError("");
-                      }}
-                    >
-                      Clear destination
-                    </button>
-                  )}
-                </div>
-                <p className="route-destination">
-                  {destination
-                    ? `To ${
-                        destinationLabel ||
-                        `${destination[1].toFixed(4)}, ${destination[0].toFixed(4)}`
-                      }`
-                    : "Tap an open point on the map to choose a destination."}
-                </p>
-                <p className="route-origin">
-                  {usingDemoLocation
-                    ? "From Columbia University · demo location"
-                    : "From your current location"}
-                </p>
-                <button
-                  className="button secondary route-choose"
-                  onClick={() => setSelectingDestination(true)}
-                >
-                  {selectingDestination
-                    ? "Tap the map to place destination"
-                    : "Choose destination on map"}
-                </button>
-                <form className="route-search" onSubmit={searchForDestination}>
-                  <label htmlFor="route-destination-search">
-                    Or search an NYC address or place
-                  </label>
-                  <div className="route-search-controls">
-                    <input
-                      id="route-destination-search"
-                      type="search"
-                      value={destinationSearch}
-                      onChange={(event) => {
-                        setDestinationSearch(event.target.value);
-                        setDestinationSearchError("");
-                        setDestinationResults([]);
-                      }}
-                      placeholder="e.g. Columbia University"
-                      autoComplete="street-address"
-                    />
-                    <button
-                      className="button secondary"
-                      type="submit"
-                      disabled={destinationSearchLoading}
-                    >
-                      <Search size={16} />
-                      {destinationSearchLoading ? "Searching…" : "Search"}
-                    </button>
-                  </div>
-                </form>
-                {destinationSearchError && (
-                  <p className="route-search-error" role="alert">
-                    {destinationSearchError}
-                  </p>
-                )}
-                {destinationResults.length > 0 && (
-                  <ul className="route-search-results" aria-label="Search results">
-                    {destinationResults.map((result) => (
-                      <li key={result.id}>
-                        <button
-                          type="button"
-                          onClick={() => chooseDestinationResult(result)}
-                        >
-                          <Search size={14} />
-                          <span>{result.label}</span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                <label htmlFor="route-departure">Departure · NYC time</label>
-                <input
-                  id="route-departure"
-                  type="datetime-local"
-                  value={departureTime}
-                  onChange={(event) => {
-                    setDepartureTime(event.target.value);
-                    setRoute(null);
-                    setRouteResponse(null);
-                    setRouteError("");
-                  }}
-                />
-                <button
-                  className="button primary route-submit"
-                  disabled={
-                    routeLoading ||
-                    destinationSearchLoading ||
-                    (!destination && destinationSearch.trim().length < 2)
-                  }
-                  onClick={() => void requestRoute()}
-                >
-                  {routeLoading
-                    ? "Finding fastest clear walk…"
-                    : "Find fastest clear walk"}
-                </button>
-                {routeError && (
-                  <p className="route-error" role="alert">
-                    {routeError}
-                  </p>
-                )}
-                {routeResponse?.status === "ok" &&
-                  routeResponse.durationSeconds !== undefined && (
-                    <div className="route-result" role="status">
-                      <strong>
-                        About {Math.max(1, Math.round(routeResponse.durationSeconds / 60))} min
-                        walking
-                      </strong>
-                      <span>
-                        {Math.round(
-                          (routeResponse.distanceMeters || 0) *
-                            0.000621371 *
-                            10,
-                        ) / 10}{" "}
-                        mi · Based on scheduled data
-                      </span>
-                    </div>
-                  )}
-                {routeResponse?.warnings.map((warning) => (
-                  <p className="route-warning" key={warning.code}>
-                    {warning.message}
-                  </p>
-                ))}
-                {routeResponse?.avoidedClosures.length ? (
-                  <p className="route-avoided">
-                    Goes around {routeResponse.avoidedClosures.length} scheduled
-                    closure
-                    {routeResponse.avoidedClosures.length === 1 ? "" : "s"}.
-                  </p>
-                ) : null}
-              </div>
               <div className="list-toolbar">
                 <div className="row-between">
-                  <h2>{count.format(visible.length)} active disruptions</h2>
+                  <h2>Current disruptions</h2>
                   <button
                     className="icon-button"
                     title="Refresh closures"
@@ -998,6 +1075,145 @@ export function MapWorkspace() {
               : `${visible.length} active disruption locations`}
       </div>
     </div>
+  );
+}
+
+function DestinationSearch({
+  value,
+  loading,
+  error,
+  results,
+  activeIndex,
+  onChange,
+  onKeyDown,
+  onSubmit,
+  onChoose,
+  routeMode,
+  modeMenuOpen,
+  onToggleMode,
+  onModeChange,
+  canSubmit,
+  routeLoading,
+}: {
+  value: string;
+  loading: boolean;
+  error: string;
+  results: GeocodeResult[];
+  activeIndex: number;
+  onChange: (value: string) => void;
+  onKeyDown: (event: KeyboardEvent<HTMLInputElement>) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onChoose: (result: GeocodeResult) => void;
+  routeMode: RouteMode;
+  modeMenuOpen: boolean;
+  onToggleMode: () => void;
+  onModeChange: (mode: RouteMode) => void;
+  canSubmit: boolean;
+  routeLoading: boolean;
+}) {
+  const routeModeVerb = routeMode === "driving-car" ? "drive" : "walk";
+  return (
+    <>
+      <form className="destination-search" onSubmit={onSubmit}>
+        <label className="sr-only" htmlFor="route-destination-search">
+          Where to go?
+        </label>
+        <div className="destination-search-box">
+          <Search size={19} aria-hidden="true" />
+          <input
+            id="route-destination-search"
+            type="search"
+            role="combobox"
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            onKeyDown={onKeyDown}
+            placeholder="Where to go?"
+            autoComplete="off"
+            aria-autocomplete="list"
+            aria-controls="route-destination-results"
+            aria-expanded={results.length > 0}
+            aria-activedescendant={
+              activeIndex >= 0
+                ? `destination-result-${activeIndex}`
+                : undefined
+            }
+          />
+          {loading && (
+            <span className="destination-search-status" aria-live="polite">
+              Searching…
+            </span>
+          )}
+          <button
+            className="destination-mode-button"
+            type="button"
+            aria-label={`Travel mode: ${routeModeVerb}`}
+            aria-haspopup="menu"
+            aria-expanded={modeMenuOpen}
+            onClick={onToggleMode}
+          >
+            <SlidersHorizontal size={17} aria-hidden="true" />
+            <span>{routeMode === "driving-car" ? "Drive" : "Walk"}</span>
+          </button>
+          <button
+            className="destination-search-submit"
+            type="submit"
+            disabled={!canSubmit || routeLoading}
+          >
+            {routeLoading ? "Finding…" : `Find clearest ${routeModeVerb}`}
+          </button>
+        </div>
+        {modeMenuOpen && (
+          <div className="route-mode-menu" role="menu" aria-label="Travel mode">
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={routeMode === "foot-walking"}
+              className={routeMode === "foot-walking" ? "selected" : ""}
+              onClick={() => onModeChange("foot-walking")}
+            >
+              <Footprints size={16} aria-hidden="true" />
+              Walk
+            </button>
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={routeMode === "driving-car"}
+              className={routeMode === "driving-car" ? "selected" : ""}
+              onClick={() => onModeChange("driving-car")}
+            >
+              <Car size={16} aria-hidden="true" />
+              Drive
+            </button>
+          </div>
+        )}
+      </form>
+      {error && (
+        <p className="route-search-error" role="alert">
+          {error}
+        </p>
+      )}
+      {results.length > 0 && (
+        <ul
+          id="route-destination-results"
+          className="route-search-results"
+          aria-label="Destination suggestions"
+        >
+          {results.map((result, index) => (
+            <li key={result.id}>
+              <button
+                id={`destination-result-${index}`}
+                type="button"
+                className={index === activeIndex ? "active" : ""}
+                onClick={() => onChoose(result)}
+              >
+                <Search size={14} aria-hidden="true" />
+                <span>{result.label}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
   );
 }
 
