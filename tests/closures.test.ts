@@ -1,0 +1,107 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  normalizeFeature,
+  SOURCES,
+  overlaps,
+  validGeometry,
+  inBounds,
+} from "../src/lib/closures/normalize";
+
+const rawEvent = {
+  geometry: {
+    type: "LineString",
+    coordinates: [
+      [-73.98, 40.75],
+      [-73.97, 40.76],
+    ],
+  },
+  properties: {
+    OBJECTID: 12,
+    EventName: "Parade",
+    R_EventStartDate: 20000,
+    R_EventEndDate: 30000,
+    R_EventSetupStartDate: 10000,
+    R_EventBreakDownEndDate: 40000,
+  },
+};
+test("event footprint includes setup and breakdown but does not claim pedestrian closure", () => {
+  const f = normalizeFeature(rawEvent, SOURCES[0])!;
+  assert.equal(f.properties.start, 10000);
+  assert.equal(f.properties.end, 40000);
+  assert.equal(f.properties.pedestrianImpact, "unknown");
+  assert.equal(f.properties.id, "events-12");
+  assert.equal(f.properties.eventStart, 20000);
+});
+test("time windows include overlapping schedules and exclude expired and later closures", () => {
+  const f = normalizeFeature(rawEvent, SOURCES[0])!;
+  assert.equal(overlaps(f, 15000, 25000), true);
+  assert.equal(overlaps(f, 40001, 50000), false);
+  assert.equal(overlaps(f, 1, 9999), false);
+});
+test("rejects malformed coordinates, missing timestamps, inverted schedules and missing IDs", () => {
+  assert.equal(
+    validGeometry({ type: "Point", coordinates: [40.75, -73.98] }),
+    false,
+  );
+  assert.equal(
+    validGeometry({
+      type: "LineString",
+      coordinates: [
+        [NaN, 40.75],
+        [-73.9, 40.7],
+      ],
+    }),
+    false,
+  );
+  assert.equal(
+    normalizeFeature({ ...rawEvent, properties: { OBJECTID: 12 } }, SOURCES[0]),
+    null,
+  );
+  assert.equal(
+    normalizeFeature(
+      {
+        ...rawEvent,
+        properties: {
+          OBJECTID: 12,
+          R_EventStartDate: 40000,
+          R_EventEndDate: 10000,
+        },
+      },
+      SOURCES[0],
+    ),
+    null,
+  );
+  assert.equal(
+    normalizeFeature(
+      {
+        ...rawEvent,
+        properties: { ...rawEvent.properties, OBJECTID: undefined },
+      },
+      SOURCES[0],
+    ),
+    null,
+  );
+});
+test("construction intersections retain point geometry and source-specific IDs", () => {
+  const f = normalizeFeature(
+    {
+      geometry: { type: "Point", coordinates: [-73.98, 40.75] },
+      properties: {
+        OBJECTID: 12,
+        OnStreetName: "BROADWAY",
+        FromStreetName: "WEST 42 STREET",
+        Borough_Code: "M",
+        Work_Start_Date: 10000,
+        Work_End_Date: 30000,
+      },
+    },
+    SOURCES[2],
+  )!;
+  assert.equal(f.geometry.type, "Point");
+  assert.equal(f.properties.title, "Broadway");
+  assert.equal(f.properties.borough, "Manhattan");
+  assert.equal(f.properties.id, "intersections-12");
+  assert.equal(inBounds(f, [-74, 40.7, -73.9, 40.8]), true);
+  assert.equal(inBounds(f, [-74, 40.5, -73.9, 40.6]), false);
+});
