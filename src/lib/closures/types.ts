@@ -22,7 +22,7 @@ export type ClosureProperties = {
   permitStatus: string;
   source: string;
   sourceUrl: string;
-  pedestrianImpact: "unknown";
+  pedestrianImpact: "unknown" | "blocked" | "open";
 };
 export type ClosureFeature = Feature<ClosureGeometry, ClosureProperties>;
 export type SourceStatus = {

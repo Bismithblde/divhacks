@@ -371,6 +371,139 @@ svg {
 .filter-chip.selected:hover {
   background: var(--sage);
 }
+.route-planner {
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-muted);
+}
+.route-planner h2 {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.route-planner > p {
+  margin: 6px 0 12px;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.route-planner label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+.route-planner input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  background: var(--surface);
+  font-size: 0.875rem;
+}
+.route-choose {
+  width: 100%;
+  min-height: 40px;
+  margin-bottom: 10px;
+  font-size: 0.875rem;
+}
+.route-search {
+  margin-bottom: 10px;
+}
+.route-search-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+.route-search-controls input {
+  min-width: 0;
+}
+.route-search-controls .button {
+  min-height: 42px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-size: 0.75rem;
+}
+.route-search-error {
+  color: var(--on-error);
+}
+.route-search-results {
+  list-style: none;
+  max-height: 160px;
+  overflow-y: auto;
+  margin: 0 0 12px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.route-search-results button {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--foreground);
+  text-align: left;
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+.route-search-results li:last-child button {
+  border-bottom: 0;
+}
+.route-search-results button:hover,
+.route-search-results button:focus-visible {
+  background: var(--surface-muted);
+}
+.route-search-results button svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--muted);
+}
+.route-submit {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 10px;
+  font-size: 0.875rem;
+}
+.route-error,
+.route-warning,
+.route-avoided,
+.route-search-error {
+  margin: 10px 0 0;
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+.route-error {
+  color: var(--on-error);
+}
+.route-warning {
+  color: var(--on-warning);
+}
+.route-avoided {
+  color: var(--on-sage);
+}
+.route-result {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--sage);
+  color: var(--on-sage);
+  font-size: 0.75rem;
+}
+.route-result strong {
+  font-size: 1rem;
+}
 .list-toolbar {
   padding: 12px 24px 16px;
   border-top: 1px solid var(--border);
@@ -524,29 +657,53 @@ svg {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
-.map-location {
+.map-timeline {
   position: absolute;
-  top: 24px;
-  left: 24px;
+  z-index: 4;
+  left: 50%;
+  bottom: 16px;
+  width: min(560px, calc(100% - 48px));
+  transform: translateX(-50%);
+  padding: 12px 16px 10px;
   background: var(--surface);
-  box-shadow: var(--shadow-floating);
   border-radius: var(--radius-md);
-  display: flex;
+  box-shadow: var(--shadow-floating);
+}
+.timeline-heading {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
-  gap: 8px;
-  padding: 12px 16px;
-  font-size: 0.875rem;
-  pointer-events: none;
-}
-.map-location > span:last-child {
+  gap: 10px;
   font-size: 0.75rem;
-  color: var(--muted);
 }
-.location-separator {
-  width: 1px;
-  height: 14px;
-  background: var(--border);
-  margin: 0 4px;
+.timeline-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-weight: 500;
+}
+.timeline-heading strong {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.timeline-count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.timeline-range {
+  display: block;
+  width: 100%;
+  height: 24px;
+  margin: 3px 0 0;
+  accent-color: var(--on-sage);
+  cursor: pointer;
+}
+.timeline-ticks {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 0.625rem;
 }
 .map-tools {
   position: absolute;
@@ -584,8 +741,9 @@ svg {
 }
 .map-legend {
   position: absolute;
-  bottom: 48px;
+  top: 24px;
   left: 24px;
+  pointer-events: none;
   background: var(--surface);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-floating);
@@ -672,9 +830,13 @@ svg {
   color: var(--on-warning);
   padding: 12px 16px;
   font-size: 0.875rem;
+  pointer-events: none;
 }
 .map-notice p {
   margin: 0;
+}
+.map-notice .text-button {
+  pointer-events: auto;
 }
 .button {
   display: inline-flex;
@@ -1016,7 +1178,12 @@ svg {
     /* Resize directly so the WebGL canvas is not relaid out every animation frame. */
   }
   .closure-panel.expanded {
-    height: 65%;
+    height: calc(100% - 160px);
+    overflow-y: auto;
+  }
+  .closure-panel.expanded .panel-scroll {
+    flex: none;
+    overflow: visible;
   }
   .sheet-handle {
     display: flex;
@@ -1081,8 +1248,13 @@ svg {
   }
   .closure-panel:not(.expanded) .list-toolbar,
   .closure-panel:not(.expanded) .panel-scroll,
-  .closure-panel:not(.expanded) .panel-footer {
+  .closure-panel:not(.expanded) .panel-footer,
+  .closure-panel:not(.expanded) .route-planner {
     display: none;
+  }
+  .closure-results {
+    padding-bottom: 56px;
+    scroll-padding-bottom: 56px;
   }
   .mobile-map-actions {
     display: flex;
@@ -1117,14 +1289,21 @@ svg {
   .panel-footer {
     display: none;
   }
-  .map-location {
-    top: 16px;
+  .map-timeline {
     left: 16px;
-    padding: 10px 12px;
-    font-size: 0.75rem;
+    right: 16px;
+    bottom: 12px;
+    width: auto;
+    transform: none;
+    padding: 10px 12px 8px;
   }
-  .map-location > span:last-child,
-  .location-separator {
+  .workspace:has(.closure-panel.expanded) .map-timeline {
+    display: none;
+  }
+  .timeline-heading {
+    grid-template-columns: auto 1fr;
+  }
+  .timeline-count {
     display: none;
   }
   .map-tools {
@@ -1133,7 +1312,7 @@ svg {
     gap: 8px;
   }
   .map-legend {
-    bottom: 48px;
+    top: 16px;
     left: 16px;
     gap: 12px;
     font-size: 0.625rem;
@@ -1150,7 +1329,7 @@ svg {
     margin-left: 16px !important;
   }
   .map-notice {
-    bottom: 90px;
+    bottom: 160px;
     left: 16px;
     font-size: 0.75rem;
   }

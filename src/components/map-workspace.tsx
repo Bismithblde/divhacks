@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import {
+  type FormEvent,
   useCallback,
   useDeferredValue,
   useEffect,
@@ -21,7 +22,6 @@ import {
   Footprints,
   Info,
   Layers2,
-  MapPin,
   Navigation,
   RefreshCw,
   Search,
@@ -36,7 +36,23 @@ import type {
   ClosureResponse,
   ClosureKind,
 } from "@/lib/closures/types";
-import { inBounds } from "@/lib/closures/normalize";
+import { inBounds, overlaps } from "@/lib/closures/normalize";
+import {
+  newYorkDateTimeInput,
+  newYorkDateTimeToIso,
+  newYorkDayWindow,
+  TIMELINE_DAYS,
+} from "@/lib/closures/time";
+import type {
+  Coordinate,
+  RouteResponse,
+  RouteFeature,
+} from "@/lib/routing/types";
+import { DEMO_LOCATION } from "@/lib/location";
+import type {
+  GeocodeResponse,
+  GeocodeResult,
+} from "@/lib/geocoding/types";
 
 const ClosureMap = dynamic(
   () => import("./closure-map").then((m) => m.ClosureMap),
@@ -46,6 +62,7 @@ const ClosureMap = dynamic(
   },
 );
 const EMPTY: ClosureFeature[] = [];
+const PRELOAD_DAYS = 7;
 const count = new Intl.NumberFormat("en-US");
 const date = (n: number, includeTime = false) =>
   new Intl.DateTimeFormat("en-US", {
@@ -61,7 +78,6 @@ export function MapWorkspace() {
   const [data, setData] = useState<ClosureResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [days, setDays] = useState(1);
   const [refresh, setRefresh] = useState(0);
   const [kind, setKind] = useState<"all" | ClosureKind>("all");
   const [query, setQuery] = useState("");
@@ -73,6 +89,28 @@ export function MapWorkspace() {
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [limit, setLimit] = useState(40);
   const [fitRequest, setFitRequest] = useState(0);
+  const [timelineDay, setTimelineDay] = useState(0);
+  const [destination, setDestination] = useState<Coordinate | null>(null);
+  const [destinationLabel, setDestinationLabel] = useState("");
+  const [selectingDestination, setSelectingDestination] = useState(false);
+  const [destinationSearch, setDestinationSearch] = useState("");
+  const [destinationResults, setDestinationResults] = useState<GeocodeResult[]>(
+    [],
+  );
+  const [destinationSearchLoading, setDestinationSearchLoading] =
+    useState(false);
+  const [destinationSearchError, setDestinationSearchError] = useState("");
+  const [avoidClosureIds, setAvoidClosureIds] = useState<string[]>([]);
+  const [route, setRoute] = useState<RouteFeature | null>(null);
+  const [routeResponse, setRouteResponse] = useState<RouteResponse | null>(
+    null,
+  );
+  const [routeLoading, setRouteLoading] = useState(false);
+  const [routeError, setRouteError] = useState("");
+  const [usingDemoLocation, setUsingDemoLocation] = useState(true);
+  const [departureTime, setDepartureTime] = useState(() =>
+    newYorkDateTimeInput(0),
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -80,7 +118,7 @@ export function MapWorkspace() {
       setLoading(true);
       setError("");
       try {
-        const response = await fetch(`/api/closures?days=${days}`, {
+        const response = await fetch(`/api/closures?days=${PRELOAD_DAYS}`, {
           signal: controller.signal,
         });
         const body = await response.json();
@@ -117,9 +155,28 @@ export function MapWorkspace() {
       controller.abort();
       clearInterval(timer);
     };
-  }, [days, refresh]);
+  }, [refresh]);
 
-  const features = data?.meta.days === days ? data.features : EMPTY;
+  const loadedFeatures =
+    data?.meta.days === PRELOAD_DAYS ? data.features : EMPTY;
+  const timelineWindow = useMemo(
+    () => newYorkDayWindow(timelineDay),
+    [timelineDay],
+  );
+  const features = useMemo(
+    () =>
+      loadedFeatures.filter((feature) =>
+        overlaps(feature, timelineWindow.start, timelineWindow.end),
+      ),
+    [loadedFeatures, timelineWindow],
+  );
+  const timelineOptions = useMemo(
+    () =>
+      Array.from({ length: TIMELINE_DAYS }, (_, offset) =>
+        newYorkDayWindow(offset),
+      ),
+    [],
+  );
   const filtered = useMemo(
     () =>
       features.filter(
@@ -152,6 +209,7 @@ export function MapWorkspace() {
     : null;
   const onSelect = useCallback((id: string) => {
     setSelectedId(id);
+    setAvoidClosureIds([id]);
     setSourcesOpen(false);
     setExpanded(true);
   }, []);
@@ -165,7 +223,133 @@ export function MapWorkspace() {
     setKind("all");
     setOnlyVisible(false);
     setSelectedId(null);
+    setAvoidClosureIds([]);
     setLimit(40);
+  };
+  const changeTimelineDay = (value: number) => {
+    setTimelineDay(value);
+    setSelectedId(null);
+    setAvoidClosureIds([]);
+    setLimit(40);
+    setDepartureTime(newYorkDateTimeInput(value));
+    setRoute(null);
+    setRouteResponse(null);
+    setRouteError("");
+  };
+  const onDestination = useCallback((coordinate: Coordinate) => {
+    setDestination(coordinate);
+    setDestinationLabel("");
+    setSelectingDestination(false);
+    setDestinationResults([]);
+    setDestinationSearchError("");
+    setRoute(null);
+    setRouteResponse(null);
+    setRouteError("");
+    setExpanded(true);
+  }, []);
+  const searchForDestination = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const query = destinationSearch.trim();
+    if (query.length < 2) {
+      setDestinationSearchError("Enter at least 2 characters to search.");
+      setDestinationResults([]);
+      return;
+    }
+    setDestinationSearchLoading(true);
+    setDestinationSearchError("");
+    setDestinationResults([]);
+    try {
+      const response = await fetch(`/api/geocode?q=${encodeURIComponent(query)}`);
+      const body = (await response.json()) as GeocodeResponse;
+      if (!response.ok) {
+        throw new Error(
+          body.error || "Address search is unavailable right now.",
+        );
+      }
+      setDestinationResults(body.results);
+      if (!body.results.length) {
+        setDestinationSearchError("No NYC places matched that search.");
+      }
+    } catch (error) {
+      setDestinationSearchError(
+        error instanceof Error
+          ? error.message
+          : "Address search is unavailable right now.",
+      );
+    } finally {
+      setDestinationSearchLoading(false);
+    }
+  };
+  const chooseDestinationResult = (result: GeocodeResult) => {
+    setDestination(result.coordinate);
+    setDestinationLabel(result.label);
+    setSelectingDestination(false);
+    setDestinationResults([]);
+    setDestinationSearchError("");
+    setRoute(null);
+    setRouteResponse(null);
+    setRouteError("");
+    setExpanded(true);
+  };
+  const requestRoute = async () => {
+    if (!destination) {
+      setRouteError("Tap an open point on the map to choose a destination.");
+      return;
+    }
+    const departure = newYorkDateTimeToIso(departureTime);
+    if (!departure) {
+      setRouteError("Choose a valid NYC departure time.");
+      return;
+    }
+    setRouteLoading(true);
+    setRoute(null);
+    setRouteResponse(null);
+    setRouteError("");
+    try {
+      let origin: Coordinate;
+      try {
+        const position = await new Promise<GeolocationPosition>(
+          (resolve, reject) =>
+            navigator.geolocation.getCurrentPosition(resolve, reject, {
+              enableHighAccuracy: true,
+              timeout: 10_000,
+              maximumAge: 10_000,
+            }),
+        );
+        origin = [position.coords.longitude, position.coords.latitude];
+        setUsingDemoLocation(false);
+      } catch {
+        origin = [DEMO_LOCATION.longitude, DEMO_LOCATION.latitude];
+        setUsingDemoLocation(true);
+      }
+      const response = await fetch("/api/routes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          origin,
+          destination,
+          departureTime: departure,
+          mode: "foot-walking",
+          avoidClosureIds,
+        }),
+      });
+      const body = (await response.json()) as RouteResponse;
+      setRouteResponse(body);
+      if (!response.ok || body.status !== "ok" || !body.route) {
+        setRouteError(
+          body.error ||
+            "A verified walking route is not available right now.",
+        );
+      } else {
+        setRoute(body.route);
+      }
+    } catch {
+      setRouteError(
+        "Your location or the walking route was unavailable. Check permissions and try again.",
+      );
+    } finally {
+      setRouteLoading(false);
+    }
   };
   const sourceWarning = data?.meta.sources.some(
     (s) => s.status !== "ok" || s.unmapped > 0,
@@ -217,16 +401,14 @@ export function MapWorkspace() {
           <ClosureMap
             features={filtered}
             selected={selected}
+            route={route}
+            destination={destination}
+            selectingDestination={selectingDestination}
             onSelect={onSelect}
+            onDestination={onDestination}
             onBounds={onBounds}
             fitRequest={fitRequest}
           />
-          <div className="map-location">
-            <MapPin size={16} />
-            <span>New York City</span>
-            <span className="location-separator" />
-            <span>5 boroughs</span>
-          </div>
           {(error || sourceWarning) && (
             <button
               className="map-data-warning"
@@ -239,6 +421,35 @@ export function MapWorkspace() {
               <ChevronRight size={15} />
             </button>
           )}
+          <div className="map-timeline" aria-label="Closure timeline">
+            <div className="timeline-heading">
+              <span className="timeline-title">
+                <CalendarDays size={15} /> Closure date
+              </span>
+              <strong>{timelineWindow.label}</strong>
+              <span className="timeline-count">
+                {count.format(features.length)} mapped
+              </span>
+            </div>
+            <input
+              className="timeline-range"
+              data-testid="closure-timeline"
+              type="range"
+              min={0}
+              max={timelineOptions.length - 1}
+              step={1}
+              value={timelineDay}
+              onChange={(event) =>
+                changeTimelineDay(Number(event.target.value))
+              }
+              aria-label="Map date"
+              aria-valuetext={timelineWindow.ariaLabel}
+            />
+            <div className="timeline-ticks" aria-hidden="true">
+              <span>{timelineOptions[0].label}</span>
+              <span>{timelineOptions[timelineOptions.length - 1].label}</span>
+            </div>
+          </div>
         </section>
         <aside
           id="closure-panel"
@@ -379,23 +590,7 @@ export function MapWorkspace() {
                 </div>
                 <div className="time-filter">
                   <CalendarDays size={17} />
-                  <label htmlFor="time-window" className="sr-only">
-                    Closure time window
-                  </label>
-                  <select
-                    id="time-window"
-                    value={days}
-                    onChange={(e) => {
-                      setDays(Number(e.target.value));
-                      setSelectedId(null);
-                      setLimit(40);
-                    }}
-                  >
-                    <option value={1}>Next 24 hours</option>
-                    <option value={7}>Next 7 days</option>
-                    <option value={30}>Next 30 days</option>
-                  </select>
-                  <ChevronDown size={16} />
+                  <span>Seven-day schedule</span>
                   <span>NYC time</span>
                 </div>
                 <div className="filter-chips" aria-label="Closure type">
@@ -420,6 +615,148 @@ export function MapWorkspace() {
                     </button>
                   ))}
                 </div>
+              </div>
+              <div className="route-planner">
+                <div className="row-between">
+                  <h2>Plan a walk</h2>
+                  {destination && (
+                    <button
+                      className="text-button"
+                      onClick={() => {
+                        setDestination(null);
+                        setDestinationLabel("");
+                        setRoute(null);
+                        setRouteResponse(null);
+                        setRouteError("");
+                      }}
+                    >
+                      Clear destination
+                    </button>
+                  )}
+                </div>
+                <p className="route-destination">
+                  {destination
+                    ? `To ${
+                        destinationLabel ||
+                        `${destination[1].toFixed(4)}, ${destination[0].toFixed(4)}`
+                      }`
+                    : "Tap an open point on the map to choose a destination."}
+                </p>
+                <p className="route-origin">
+                  {usingDemoLocation
+                    ? "From Columbia University · demo location"
+                    : "From your current location"}
+                </p>
+                <button
+                  className="button secondary route-choose"
+                  onClick={() => setSelectingDestination(true)}
+                >
+                  {selectingDestination
+                    ? "Tap the map to place destination"
+                    : "Choose destination on map"}
+                </button>
+                <form className="route-search" onSubmit={searchForDestination}>
+                  <label htmlFor="route-destination-search">
+                    Or search an NYC address or place
+                  </label>
+                  <div className="route-search-controls">
+                    <input
+                      id="route-destination-search"
+                      type="search"
+                      value={destinationSearch}
+                      onChange={(event) => {
+                        setDestinationSearch(event.target.value);
+                        setDestinationSearchError("");
+                        setDestinationResults([]);
+                      }}
+                      placeholder="e.g. Columbia University"
+                      autoComplete="street-address"
+                    />
+                    <button
+                      className="button secondary"
+                      type="submit"
+                      disabled={destinationSearchLoading}
+                    >
+                      <Search size={16} />
+                      {destinationSearchLoading ? "Searching…" : "Search"}
+                    </button>
+                  </div>
+                </form>
+                {destinationSearchError && (
+                  <p className="route-search-error" role="alert">
+                    {destinationSearchError}
+                  </p>
+                )}
+                {destinationResults.length > 0 && (
+                  <ul className="route-search-results" aria-label="Search results">
+                    {destinationResults.map((result) => (
+                      <li key={result.id}>
+                        <button
+                          type="button"
+                          onClick={() => chooseDestinationResult(result)}
+                        >
+                          <Search size={14} />
+                          <span>{result.label}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <label htmlFor="route-departure">Departure · NYC time</label>
+                <input
+                  id="route-departure"
+                  type="datetime-local"
+                  value={departureTime}
+                  onChange={(event) => {
+                    setDepartureTime(event.target.value);
+                    setRoute(null);
+                    setRouteResponse(null);
+                    setRouteError("");
+                  }}
+                />
+                <button
+                  className="button primary route-submit"
+                  disabled={!destination || routeLoading}
+                  onClick={() => void requestRoute()}
+                >
+                  {routeLoading
+                    ? "Finding fastest clear walk…"
+                    : "Find fastest clear walk"}
+                </button>
+                {routeError && (
+                  <p className="route-error" role="alert">
+                    {routeError}
+                  </p>
+                )}
+                {routeResponse?.status === "ok" &&
+                  routeResponse.durationSeconds !== undefined && (
+                    <div className="route-result" role="status">
+                      <strong>
+                        About {Math.max(1, Math.round(routeResponse.durationSeconds / 60))} min
+                        walking
+                      </strong>
+                      <span>
+                        {Math.round(
+                          (routeResponse.distanceMeters || 0) *
+                            0.000621371 *
+                            10,
+                        ) / 10}{" "}
+                        mi · Based on scheduled data
+                      </span>
+                    </div>
+                  )}
+                {routeResponse?.warnings.map((warning) => (
+                  <p className="route-warning" key={warning.code}>
+                    {warning.message}
+                  </p>
+                ))}
+                {routeResponse?.avoidedClosures.length ? (
+                  <p className="route-avoided">
+                    Avoiding {routeResponse.avoidedClosures.length} mapped
+                    obstacle
+                    {routeResponse.avoidedClosures.length === 1 ? "" : "s"}.
+                  </p>
+                ) : null}
               </div>
               <div className="list-toolbar">
                 <div className="row-between">
@@ -591,7 +928,7 @@ export function MapWorkspace() {
               {expanded ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
             </button>
             <button
-              aria-label="Fit all filtered closures on map"
+              aria-label="Show all filtered closures on map"
               onClick={() => {
                 setFitRequest((n) => n + 1);
                 setExpanded(false);

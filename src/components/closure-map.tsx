@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Map,
   setWorkerUrl,
@@ -19,13 +19,113 @@ import {
 } from "lucide-react";
 import type { ClosureFeature } from "@/lib/closures/types";
 import { geometryBounds } from "@/lib/closures/normalize";
+import type { Coordinate, RouteFeature } from "@/lib/routing/types";
+import { DEMO_LOCATION } from "@/lib/location";
 
 setWorkerUrl("/maplibre/maplibre-gl-worker.mjs");
+const DEFAULT_MAP_CENTER: [number, number] = [
+  DEMO_LOCATION.longitude,
+  DEMO_LOCATION.latitude,
+];
 const empty = { type: "FeatureCollection" as const, features: [] };
+const emptyPolygons = {
+  type: "FeatureCollection" as const,
+  features: [],
+};
+const EARTH_RADIUS_METERS = 6_371_008.8;
+const LOCATION_CONE_RADIUS_METERS = 75;
+const LOCATION_CONE_FOV_DEGREES = 52;
+const LOCATION_CIRCLE_POINTS = 48;
+
+type UserLocation = {
+  longitude: number;
+  latitude: number;
+  accuracy: number;
+};
+
+type DeviceOrientationWithCompass = DeviceOrientationEvent & {
+  webkitCompassHeading?: number | null;
+};
+
+function destination(
+  longitude: number,
+  latitude: number,
+  distanceMeters: number,
+  bearingDegrees: number,
+): [number, number] {
+  const angularDistance = distanceMeters / EARTH_RADIUS_METERS;
+  const bearing = (bearingDegrees * Math.PI) / 180;
+  const lat = (latitude * Math.PI) / 180;
+  const lng = (longitude * Math.PI) / 180;
+  const nextLat = Math.asin(
+    Math.sin(lat) * Math.cos(angularDistance) +
+      Math.cos(lat) * Math.sin(angularDistance) * Math.cos(bearing),
+  );
+  const nextLng =
+    lng +
+    Math.atan2(
+      Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(lat),
+      Math.cos(angularDistance) - Math.sin(lat) * Math.sin(nextLat),
+    );
+  return [(nextLng * 180) / Math.PI, (nextLat * 180) / Math.PI];
+}
+
+function circleFeature(location: UserLocation, radiusMeters: number) {
+  const coordinates: [number, number][] = [];
+  for (let i = 0; i <= LOCATION_CIRCLE_POINTS; i += 1) {
+    coordinates.push(
+      destination(
+        location.longitude,
+        location.latitude,
+        radiusMeters,
+        (i / LOCATION_CIRCLE_POINTS) * 360,
+      ),
+    );
+  }
+  return {
+    type: "Feature" as const,
+    properties: {},
+    geometry: { type: "Polygon" as const, coordinates: [coordinates] },
+  };
+}
+
+function coneFeature(
+  location: UserLocation,
+  heading: number,
+  radiusMeters: number,
+  fieldOfViewDegrees: number,
+) {
+  const coordinates: [number, number][] = [
+    [location.longitude, location.latitude],
+  ];
+  const start = heading - fieldOfViewDegrees / 2;
+  const steps = 12;
+  for (let i = 0; i <= steps; i += 1) {
+    coordinates.push(
+      destination(
+        location.longitude,
+        location.latitude,
+        radiusMeters,
+        start + (i / steps) * fieldOfViewDegrees,
+      ),
+    );
+  }
+  coordinates.push([location.longitude, location.latitude]);
+  return {
+    type: "Feature" as const,
+    properties: {},
+    geometry: { type: "Polygon" as const, coordinates: [coordinates] },
+  };
+}
+
 type Props = {
   features: ClosureFeature[];
   selected: ClosureFeature | null;
+  route: RouteFeature | null;
+  destination: Coordinate | null;
+  selectingDestination: boolean;
   onSelect: (id: string) => void;
+  onDestination: (coordinate: Coordinate) => void;
   onBounds: (bounds: number[]) => void;
   fitRequest: number;
 };
@@ -33,21 +133,109 @@ type Props = {
 export function ClosureMap({
   features,
   selected,
+  route,
+  destination,
+  selectingDestination,
   onSelect,
+  onDestination,
   onBounds,
   fitRequest,
 }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
-  const props = useRef({ features, onSelect, onBounds });
+  const currentLocation = useRef<UserLocation | null>(null);
+  const heading = useRef<number | null>(null);
+  const watchId = useRef<number | null>(null);
+  const orientationCleanup = useRef<(() => void) | null>(null);
+  const orientationAvailable = useRef<boolean | null>(null);
+  const centeredOnLocation = useRef(false);
+  const props = useRef({
+    features,
+    onSelect,
+    onDestination,
+    onBounds,
+    selectingDestination,
+  });
   useEffect(() => {
-    props.current = { features, onSelect, onBounds };
-  }, [features, onSelect, onBounds]);
+    props.current = {
+      features,
+      onSelect,
+      onDestination,
+      onBounds,
+      selectingDestination,
+    };
+  }, [
+    features,
+    onSelect,
+    onDestination,
+    onBounds,
+    selectingDestination,
+  ]);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [locating, setLocating] = useState(false);
+  const [locationVisible, setLocationVisible] = useState(false);
+  const [locationIsDemo, setLocationIsDemo] = useState(false);
   const [attempt, setAttempt] = useState(0);
+
+  const updateLocationLayers = useCallback(() => {
+    const map = mapRef.current;
+    const location = currentLocation.current;
+    if (!map) return;
+    if (!location) {
+      (map.getSource("location") as GeoJSONSource | undefined)?.setData(empty);
+      (
+        map.getSource("location-accuracy") as GeoJSONSource | undefined
+      )?.setData(emptyPolygons);
+      (
+        map.getSource("location-cone") as GeoJSONSource | undefined
+      )?.setData(emptyPolygons);
+      return;
+    }
+
+    (map.getSource("location") as GeoJSONSource | undefined)?.setData({
+      type: "Feature",
+      properties: {},
+      geometry: {
+        type: "Point",
+        coordinates: [location.longitude, location.latitude],
+      },
+    });
+    (
+      map.getSource("location-accuracy") as GeoJSONSource | undefined
+    )?.setData(circleFeature(location, Math.min(location.accuracy, 200)));
+    (
+      map.getSource("location-cone") as GeoJSONSource | undefined
+    )?.setData(
+      heading.current === null
+        ? emptyPolygons
+        : coneFeature(
+            location,
+            heading.current,
+            LOCATION_CONE_RADIUS_METERS,
+            LOCATION_CONE_FOV_DEGREES,
+          ),
+    );
+  }, []);
+
+  const setDemoLocation = useCallback(
+    (message: string) => {
+      currentLocation.current = DEMO_LOCATION;
+      setLocationVisible(true);
+      setLocationIsDemo(true);
+      updateLocationLayers();
+      if (!centeredOnLocation.current) {
+        centeredOnLocation.current = true;
+        mapRef.current?.jumpTo({
+          center: DEFAULT_MAP_CENTER,
+          zoom: 14.5,
+        });
+      }
+      setNotice(message);
+    },
+    [updateLocationLayers],
+  );
 
   useEffect(() => {
     if (!container.current) return;
@@ -56,7 +244,7 @@ export function ClosureMap({
       map = new Map({
         container: container.current,
         style: "/map-style.json",
-        center: [-73.985, 40.735],
+        center: DEFAULT_MAP_CENTER,
         zoom: 12.1,
         minZoom: 9,
         maxZoom: 19,
@@ -204,33 +392,97 @@ export function ClosureMap({
           "circle-stroke-width": 3,
         },
       });
+      map.addSource("route", { type: "geojson", data: empty });
+      map.addLayer({
+        id: "route-casing",
+        type: "line",
+        source: "route",
+        paint: { "line-color": "#ffffff", "line-width": 10 },
+        layout: { "line-cap": "round", "line-join": "round" },
+      });
+      map.addLayer({
+        id: "route-line",
+        type: "line",
+        source: "route",
+        paint: { "line-color": "#326448", "line-width": 5 },
+        layout: { "line-cap": "round", "line-join": "round" },
+      });
+      map.addSource("destination", { type: "geojson", data: empty });
+      map.addLayer({
+        id: "destination-point",
+        type: "circle",
+        source: "destination",
+        paint: {
+          "circle-color": "#181818",
+          "circle-radius": 8,
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 3,
+        },
+      });
       map.addSource("location", { type: "geojson", data: empty });
+      map.addSource("location-accuracy", {
+        type: "geojson",
+        data: emptyPolygons,
+      });
+      map.addLayer({
+        id: "user-location-accuracy",
+        type: "fill",
+        source: "location-accuracy",
+        paint: {
+          "fill-color": "#2563EB",
+          "fill-opacity": 0.12,
+          "fill-outline-color": "#2563EB",
+        },
+      });
+      map.addSource("location-cone", {
+        type: "geojson",
+        data: emptyPolygons,
+      });
+      map.addLayer({
+        id: "user-location-cone",
+        type: "fill",
+        source: "location-cone",
+        paint: {
+          "fill-color": "#2563EB",
+          "fill-opacity": 0.2,
+          "fill-outline-color": "#2563EB",
+        },
+      });
       map.addLayer({
         id: "user-location",
         type: "circle",
         source: "location",
         paint: {
           "circle-radius": 8,
-          "circle-color": "#326448",
+          "circle-color": "#2563EB",
           "circle-stroke-color": "#fff",
           "circle-stroke-width": 3,
         },
       });
       setError("");
       setReady(true);
+      updateLocationLayers();
       reportBounds();
     });
     map.on("moveend", reportBounds);
     map.on("click", (e) => {
       if (!map.getLayer("closure-lines")) return;
+      if (props.current.selectingDestination) {
+        props.current.onDestination([e.lngLat.lng, e.lngLat.lat]);
+        return;
+      }
       const found = map.queryRenderedFeatures(
         [
-          [e.point.x - 7, e.point.y - 7],
-          [e.point.x + 7, e.point.y + 7],
+          [e.point.x - 40, e.point.y - 40],
+          [e.point.x + 40, e.point.y + 40],
         ],
         { layers: ["closure-lines", "closure-points"] },
       );
-      if (found[0]) props.current.onSelect(String(found[0].properties.id));
+      if (found[0]) {
+        props.current.onSelect(String(found[0].properties.id));
+      } else {
+        props.current.onDestination([e.lngLat.lng, e.lngLat.lat]);
+      }
     });
     map.on("mousemove", (e) => {
       if (map.getLayer("closure-lines"))
@@ -254,7 +506,15 @@ export function ClosureMap({
       map.remove();
       mapRef.current = null;
     };
-  }, [attempt]);
+  }, [attempt, updateLocationLayers]);
+
+  useEffect(() => {
+    return () => {
+      if (watchId.current !== null && "geolocation" in navigator)
+        navigator.geolocation.clearWatch(watchId.current);
+      orientationCleanup.current?.();
+    };
+  }, []);
 
   useEffect(() => {
     if (ready)
@@ -262,6 +522,26 @@ export function ClosureMap({
         mapRef.current?.getSource("closures") as GeoJSONSource | undefined
       )?.setData({ type: "FeatureCollection", features });
   }, [features, ready]);
+  useEffect(() => {
+    if (!ready) return;
+    (mapRef.current?.getSource("route") as GeoJSONSource | undefined)?.setData(
+      route || empty,
+    );
+  }, [route, ready]);
+  useEffect(() => {
+    if (!ready) return;
+    (
+      mapRef.current?.getSource("destination") as GeoJSONSource | undefined
+    )?.setData(
+      destination
+        ? {
+            type: "Feature",
+            properties: {},
+            geometry: { type: "Point", coordinates: destination },
+          }
+        : empty,
+    );
+  }, [destination, ready]);
   useEffect(() => {
     const map = mapRef.current;
     if (!ready || !map) return;
@@ -313,39 +593,143 @@ export function ClosureMap({
     );
   }, [fitRequest, ready]);
 
-  const locate = () => {
-    if (!navigator.geolocation) {
-      setNotice("Location is unavailable in this browser.");
+  const enableOrientation = useCallback(async () => {
+    const OrientationEvent = window.DeviceOrientationEvent as typeof DeviceOrientationEvent & {
+      requestPermission?: () => Promise<"granted" | "denied">;
+    };
+    if (!OrientationEvent) {
+      orientationAvailable.current = false;
       return;
     }
-    setLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      ({ coords }) => {
-        setLocating(false);
-        const { longitude: lng, latitude: lat } = coords;
-        if (lng < -74.3 || lng > -73.65 || lat < 40.45 || lat > 40.95) {
-          setNotice(
-            "You’re outside NYC. This map currently covers the five boroughs.",
-          );
+
+    try {
+      if (OrientationEvent.requestPermission) {
+        const permission = await OrientationEvent.requestPermission();
+        if (permission !== "granted") {
+          orientationAvailable.current = false;
           return;
         }
-        setNotice("");
-        (mapRef.current?.getSource("location") as GeoJSONSource)?.setData({
-          type: "Feature",
-          properties: {},
-          geometry: { type: "Point", coordinates: [lng, lat] },
-        });
-        mapRef.current?.jumpTo({ center: [lng, lat], zoom: 15 });
-      },
-      () => {
-        setLocating(false);
-        setNotice(
-          "Location wasn’t available. Allow location access in your browser, or explore the map manually.",
+      }
+      orientationAvailable.current = true;
+    } catch {
+      orientationAvailable.current = false;
+      return;
+    }
+
+    if (orientationCleanup.current) return;
+    const onOrientation = (event: Event) => {
+      const device = event as DeviceOrientationWithCompass;
+      const compassHeading = device.webkitCompassHeading;
+      let nextHeading =
+        typeof compassHeading === "number" && Number.isFinite(compassHeading)
+          ? compassHeading
+          : null;
+
+      if (nextHeading === null && device.absolute && device.alpha !== null) {
+        const screenAngle =
+          typeof screen.orientation?.angle === "number"
+            ? screen.orientation.angle
+            : 0;
+        nextHeading = 360 - device.alpha + screenAngle;
+      }
+      if (nextHeading === null || !Number.isFinite(nextHeading)) return;
+      heading.current = ((nextHeading % 360) + 360) % 360;
+      updateLocationLayers();
+    };
+
+    window.addEventListener("deviceorientationabsolute", onOrientation, true);
+    window.addEventListener("deviceorientation", onOrientation, true);
+    orientationCleanup.current = () => {
+      window.removeEventListener(
+        "deviceorientationabsolute",
+        onOrientation,
+        true,
+      );
+      window.removeEventListener("deviceorientation", onOrientation, true);
+      orientationCleanup.current = null;
+    };
+  }, [updateLocationLayers]);
+
+  const requestLocation = useCallback(
+    async (requestOrientation: boolean) => {
+      if (!navigator.geolocation) {
+        setDemoLocation(
+          "Using Columbia University as a demo location because location is unavailable in this browser.",
         );
-      },
-      { timeout: 10000, maximumAge: 60000 },
-    );
+        return;
+      }
+      if (requestOrientation) await enableOrientation();
+      if (currentLocation.current) {
+        mapRef.current?.jumpTo({
+          center: [
+            currentLocation.current.longitude,
+            currentLocation.current.latitude,
+          ],
+          zoom: 15,
+        });
+        return;
+      }
+      if (watchId.current !== null) return;
+      setLocating(true);
+      watchId.current = navigator.geolocation.watchPosition(
+        ({ coords }) => {
+          setLocating(false);
+          const { longitude: lng, latitude: lat } = coords;
+          if (lng < -74.3 || lng > -73.65 || lat < 40.45 || lat > 40.95) {
+            currentLocation.current = null;
+            setLocationVisible(false);
+            updateLocationLayers();
+            setNotice(
+              "You’re outside NYC. This map currently covers the five boroughs.",
+            );
+            return;
+          }
+          currentLocation.current = {
+            longitude: lng,
+            latitude: lat,
+            accuracy: Number.isFinite(coords.accuracy) ? coords.accuracy : 25,
+          };
+          setLocationVisible(true);
+          setLocationIsDemo(false);
+          updateLocationLayers();
+          if (!centeredOnLocation.current) {
+            centeredOnLocation.current = true;
+            mapRef.current?.jumpTo({ center: [lng, lat], zoom: 15 });
+          }
+          setNotice(
+            orientationAvailable.current === false
+              ? "Your location is shown, but device orientation is unavailable."
+              : "",
+          );
+        },
+        (error) => {
+          setLocating(false);
+          setLocationVisible(false);
+          if (watchId.current !== null)
+            navigator.geolocation.clearWatch(watchId.current);
+          watchId.current = null;
+          setDemoLocation(
+            error.code === 1
+              ? "Using Columbia University as a demo location. Allow location access to use your current position."
+              : "Using Columbia University as a demo location because your position is unavailable.",
+          );
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 10000 },
+      );
+    },
+    [enableOrientation, updateLocationLayers, setDemoLocation],
+  );
+
+  useEffect(() => {
+    if (!ready) return;
+    const timer = window.setTimeout(() => void requestLocation(false), 0);
+    return () => window.clearTimeout(timer);
+  }, [ready, requestLocation]);
+
+  const locate = () => {
+    void requestLocation(true);
   };
+
   return (
     <>
       <div
@@ -356,6 +740,8 @@ export function ClosureMap({
         data-testid="closure-map"
         data-ready={ready}
         data-feature-count={features.length}
+        data-location-visible={locationVisible}
+        data-location-demo={locationIsDemo}
       />
       {!ready && !error && (
         <div className="map-loading" role="status">
@@ -413,12 +799,12 @@ export function ClosureMap({
         </button>
         <button
           className="map-tool"
-          aria-label="Reset map to Manhattan"
+          aria-label="Reset map to Columbia demo location"
           disabled={!ready}
           onClick={() =>
             mapRef.current?.jumpTo({
-              center: [-73.985, 40.735],
-              zoom: 12.1,
+              center: DEFAULT_MAP_CENTER,
+              zoom: 14.5,
               bearing: 0,
               pitch: 0,
             })
@@ -443,6 +829,7 @@ export function ClosureMap({
       </div>
       <button
         className="fit-map"
+        aria-label="Show all filtered closures on map"
         disabled={!ready || !features.length}
         onClick={() => {
           const bs = features.map((f) => geometryBounds(f.geometry));
