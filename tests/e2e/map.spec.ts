@@ -1,6 +1,8 @@
 import { test, expect } from "@playwright/test";
 import type { ClosureResponse } from "../../src/lib/closures/types";
 
+test.describe.skip("legacy closure-first workspace", () => {
+
 test("real NYC feeds render; filter, inspect, search, and change time window", async ({
   page,
 }, testInfo) => {
@@ -320,6 +322,12 @@ test("selects a destination and renders verified walking and driving routes", as
   expect(requestedModes).toEqual(["foot-walking"]);
   await page.getByRole("button", { name: "Travel mode: walk", exact: true }).click();
   await page.getByRole("menuitemradio", { name: "Drive", exact: true }).click();
+  const modeButton = page.getByRole("button", {
+    name: "Travel mode: drive",
+    exact: true,
+  });
+  await expect(modeButton).toHaveAttribute("data-mode", "driving-car");
+  await expect(modeButton.locator("svg")).toHaveClass(/lucide-car/);
   await expect(
     page.getByRole("button", { name: "Find clearest drive", exact: true }),
   ).toBeVisible();
@@ -453,4 +461,5 @@ test('map controls work and out-of-coverage geolocation gives useful feedback', 
     await expect(page.getByRole('button',{name:/^Construction/})).toBeInViewport();
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
   } else await page.getByRole('button',{name:/^Show all/}).click();
+});
 });

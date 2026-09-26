@@ -1,6 +1,8 @@
 # BlockedNYC
 
-A mobile-first map that routes you around the parades, protests and roadwork nobody told you about.
+Mobile-first NYC trip planning and disruption mapping. Give it a destination
+and an arrival deadline, compare transit, walking, and driving options, or
+explore the parades, protests, and roadwork nobody told you about.
 
 ## The problem
 
@@ -34,13 +36,38 @@ Open http://localhost:3000. Next.js serves both frontend and backend.
 
 ## Routing and search key
 
-Routing and destination search call OpenRouteService from server-only route handlers. Add the key to `.env.local`:
+Routing and destination search call OpenRouteService from server-only route
+handlers. Add the key to `.env.local`:
 
-    OPENROUTESERVICE_API_KEY=your-server-side-key
+```sh
+OPENROUTESERVICE_API_KEY=your-server-side-key
+```
 
-Never use a `NEXT_PUBLIC_` variable for this key — that ships it to every browser that loads the page.
+Never use a `NEXT_PUBLIC_` variable for this key. Without it, the UI reports
+that routing and search are unavailable rather than failing silently.
 
-Without the key the app still runs and reports plainly that routing and search are unavailable, rather than failing silently. Columbia University is the labeled demo origin when browser geolocation is unavailable.
+## Structure
+
+- `src/app/page.tsx`: Trip Autopilot entry point.
+- `src/app/api/health/route.ts`: backend health endpoint (`GET /api/health`).
+- `src/app/api/closures/route.ts`: normalized NYC closure feed.
+- `src/app/api/geocode/route.ts`: bounded server-side NYC destination search.
+- `src/app/api/routes/route.ts`: server-side obstacle-aware walking and driving routes.
+- `src/app/api/trips/plan/route.ts`: deadline-aware trip planning endpoint.
+- `src/app/api/trips/replan/route.ts`: current-trip stay-versus-switch endpoint.
+- `src/components/trip-workspace.tsx`: primary mobile trip workflow.
+- `src/lib/trips/`: trip contracts, scoring, LangGraph orchestration, and explanations.
+- `src/lib/transit/otp.ts`: OpenTripPlanner and official MTA Bus Time adapters.
+- `infra/otp/README.md`: local OTP and MTA feed setup.
+- `src/lib/closures/permitted-events.ts`: supplemental NYC Open Data permitted-event adapter.
+- `src/lib/closures/centerline.ts`: server-side street-name and intersection geometry resolver.
+- `src/app/manifest.ts`: PWA manifest.
+- `src/components/service-worker.tsx`: production-only service worker registration.
+- `public/sw.js`, `public/offline.html`: offline fallback; live API and map data are never cached.
+- `AGENTS.md`: concise app context for coding agents.
+- `PRODUCT.md`: product context and open decisions.
+
+Columbia University is the labeled demo origin when browser geolocation is unavailable.
 
 ## How it works
 
@@ -49,6 +76,31 @@ Mapped ArcGIS layers are the primary disruption source. The server supplements t
 That feed gives locations as text, never coordinates:
 
     5 AVENUE between EAST 42 STREET and EAST 59 STREET
+
+## Transit and trip planning
+
+OpenTripPlanner is the transit router. Set `OTP_BASE_URL` to an internal OTP 2
+service built with NYC GTFS and MTA subway GTFS-Realtime feeds. The app keeps
+the provider behind a typed adapter and returns an explicit unavailable state
+when OTP is not configured.
+
+When approved, add the official Bus Time key to the server environment:
+
+```sh
+OTP_BASE_URL=http://localhost:8080
+MTA_BUS_TIME_API_KEY=your-server-side-key
+```
+
+Bus Time is used for live bus stop predictions and vehicle status. The key is
+never sent to client components or committed. Without it, bus plans remain
+clearly labeled as schedule-based. See `infra/otp/README.md` for the data flow.
+
+Trip planning uses LangGraph as a bounded server-side workflow. Route
+selection, closure verification, delay comparison, and stay-versus-switch
+decisions are deterministic. An optional model API only explains verified facts
+and falls back to a template when unavailable.
+
+## Closure data sources
 
 Turning that into geometry means folding inconsistent street names to one canonical form, finding where each cross street actually meets the main street, and selecting the blocks between them. This happens in `src/lib/closures/centerline.ts`, matched against NYC's DCM Street Centerline dataset.
 

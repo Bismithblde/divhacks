@@ -160,7 +160,7 @@ export async function POST(request: Request) {
   try {
     const [clearResult, fasterResult] = await Promise.allSettled([
       findRoute(validation.request, classified.hard),
-      validation.request.mode === "foot-walking"
+      validation.request.mode === "foot-walking" && relevant.length > 0
         ? findFasterDisruptionRoute(validation.request, relevant)
         : Promise.resolve(null),
     ]);

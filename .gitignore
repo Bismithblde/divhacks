@@ -42,5 +42,6 @@ next-env.d.ts
 
 # Generated MapLibre worker assets
 /public/maplibre/
+/infra/otp/data/
 /test-results/
 /playwright-report/

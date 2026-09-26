@@ -104,12 +104,14 @@ async function requestRoutes(
   const payload: Record<string, unknown> = {
     coordinates: [request.origin, request.destination],
     instructions: false,
-    alternative_routes: {
+  };
+  if (request.mode === "foot-walking") {
+    payload.alternative_routes = {
       target_count: 2,
       weight_factor: 1.4,
       share_factor: 0.6,
-    },
-  };
+    };
+  }
   if (polygon.coordinates.length) {
     payload.options = { avoid_polygons: polygon };
   }

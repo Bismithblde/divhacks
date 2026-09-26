@@ -455,7 +455,7 @@ export function MapWorkspace() {
           (resolve, reject) =>
             navigator.geolocation.getCurrentPosition(resolve, reject, {
               enableHighAccuracy: true,
-              timeout: 10_000,
+              timeout: 3_000,
               maximumAge: 10_000,
             }),
         );
@@ -578,7 +578,14 @@ export function MapWorkspace() {
               onChoose={chooseDestinationResult}
               routeMode={routeMode}
               modeMenuOpen={routeModeMenuOpen}
-              onToggleMode={() => setRouteModeMenuOpen((open) => !open)}
+              onToggleMode={() => {
+                changeRouteMode(
+                  routeMode === "foot-walking"
+                    ? "driving-car"
+                    : "foot-walking",
+                );
+                setRouteModeMenuOpen(true);
+              }}
               onModeChange={changeRouteMode}
               canSubmit={Boolean(destination || destinationResults.length)}
               routeLoading={routeLoading}
@@ -1147,11 +1154,16 @@ function DestinationSearch({
             className="destination-mode-button"
             type="button"
             aria-label={`Travel mode: ${routeModeVerb}`}
+            data-mode={routeMode}
             aria-haspopup="menu"
             aria-expanded={modeMenuOpen}
             onClick={onToggleMode}
           >
-            <SlidersHorizontal size={17} aria-hidden="true" />
+            {routeMode === "driving-car" ? (
+              <Car size={17} aria-hidden="true" />
+            ) : (
+              <Footprints size={17} aria-hidden="true" />
+            )}
             <span>{routeMode === "driving-car" ? "Drive" : "Walk"}</span>
           </button>
           <button

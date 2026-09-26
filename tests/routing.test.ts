@@ -352,8 +352,13 @@ test("driving routing uses the car profile", async () => {
   const originalFetch = globalThis.fetch;
   process.env.OPENROUTESERVICE_API_KEY = "test-key";
   let requestedUrl = "";
-  globalThis.fetch = async (input) => {
+  let requestedBody: Record<string, unknown> = {};
+  globalThis.fetch = async (input, init) => {
     requestedUrl = String(input);
+    requestedBody = JSON.parse(String(init?.body || "{}")) as Record<
+      string,
+      unknown
+    >;
     return new Response(
       JSON.stringify({
         type: "FeatureCollection",
@@ -386,6 +391,7 @@ test("driving routing uses the car profile", async () => {
       [],
     );
     assert.match(requestedUrl, /directions\/driving-car\/geojson$/);
+    assert.equal(requestedBody.alternative_routes, undefined);
     assert.equal(result.route.properties.durationSeconds, 480);
   } finally {
     globalThis.fetch = originalFetch;

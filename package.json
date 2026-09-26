@@ -13,15 +13,20 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@langchain/core": "^1.2.12",
+    "@langchain/langgraph": "^1.4.18",
+    "@mapbox/polyline": "^1.2.1",
     "lucide-react": "^1.48.0",
     "maplibre-gl": "^6.11.2",
     "next": "16.3.6",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4",
+    "@types/mapbox__polyline": "^1.0.5",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

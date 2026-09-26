@@ -1,5 +1,5 @@
-import { MapWorkspace } from "@/components/map-workspace";
+import { TripWorkspace } from "@/components/trip-workspace";
 
 export default function Home() {
-  return <MapWorkspace />;
+  return <TripWorkspace />;
 }
