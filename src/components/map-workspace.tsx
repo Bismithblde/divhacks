@@ -253,6 +253,16 @@ export function MapWorkspace() {
     setRouteError("");
     setExpanded(true);
   }, []);
+  const lookupPlaces = async (query: string) => {
+    const response = await fetch(
+      `/api/geocode?q=${encodeURIComponent(query)}`,
+    );
+    const body = (await response.json()) as GeocodeResponse;
+    if (!response.ok) {
+      throw new Error(body.error || "Address search is unavailable right now.");
+    }
+    return body.results;
+  };
   const searchForDestination = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const query = destinationSearch.trim();
@@ -265,15 +275,9 @@ export function MapWorkspace() {
     setDestinationSearchError("");
     setDestinationResults([]);
     try {
-      const response = await fetch(`/api/geocode?q=${encodeURIComponent(query)}`);
-      const body = (await response.json()) as GeocodeResponse;
-      if (!response.ok) {
-        throw new Error(
-          body.error || "Address search is unavailable right now.",
-        );
-      }
-      setDestinationResults(body.results);
-      if (!body.results.length) {
+      const results = await lookupPlaces(query);
+      setDestinationResults(results);
+      if (!results.length) {
         setDestinationSearchError("No NYC places matched that search.");
       }
     } catch (error) {
@@ -298,9 +302,48 @@ export function MapWorkspace() {
     setExpanded(true);
   };
   const requestRoute = async () => {
-    if (!destination) {
-      setRouteError("Tap an open point on the map to choose a destination.");
-      return;
+    let target = destination;
+    if (!target) {
+      const query = destinationSearch.trim();
+      if (query.length < 2) {
+        setRouteError("Search for an NYC address or tap the map.");
+        return;
+      }
+      if (destinationResults.length > 1) {
+        setRouteError("Choose one of the matching places.");
+        return;
+      }
+      if (destinationResults.length === 1) {
+        target = destinationResults[0].coordinate;
+        chooseDestinationResult(destinationResults[0]);
+      } else {
+        setDestinationSearchLoading(true);
+        setDestinationSearchError("");
+        setRouteError("");
+        try {
+          const results = await lookupPlaces(query);
+          setDestinationResults(results);
+          if (results.length === 1) {
+            target = results[0].coordinate;
+            chooseDestinationResult(results[0]);
+          } else if (!results.length) {
+            setDestinationSearchError("No NYC places matched that search.");
+            return;
+          } else {
+            setRouteError("Choose one of the matching places.");
+            return;
+          }
+        } catch (error) {
+          setDestinationSearchError(
+            error instanceof Error
+              ? error.message
+              : "Address search is unavailable right now.",
+          );
+          return;
+        } finally {
+          setDestinationSearchLoading(false);
+        }
+      }
     }
     const departure = newYorkDateTimeToIso(departureTime);
     if (!departure) {
@@ -333,7 +376,7 @@ export function MapWorkspace() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           origin,
-          destination,
+          destination: target,
           departureTime: departure,
           mode: "foot-walking",
           avoidClosureIds,
@@ -720,7 +763,11 @@ export function MapWorkspace() {
                 />
                 <button
                   className="button primary route-submit"
-                  disabled={!destination || routeLoading}
+                  disabled={
+                    routeLoading ||
+                    destinationSearchLoading ||
+                    (!destination && destinationSearch.trim().length < 2)
+                  }
                   onClick={() => void requestRoute()}
                 >
                   {routeLoading
@@ -756,8 +803,8 @@ export function MapWorkspace() {
                 ))}
                 {routeResponse?.avoidedClosures.length ? (
                   <p className="route-avoided">
-                    Avoiding {routeResponse.avoidedClosures.length} mapped
-                    obstacle
+                    Goes around {routeResponse.avoidedClosures.length} scheduled
+                    closure
                     {routeResponse.avoidedClosures.length === 1 ? "" : "s"}.
                   </p>
                 ) : null}

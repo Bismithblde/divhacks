@@ -107,22 +107,22 @@ export function classifyObstacles(
   const hard: ClosureFeature[] = [];
   const warnings: RouteWarning[] = [];
 
+  if (features.length) {
+    warnings.push({
+      code: "approximate-obstacle",
+      message:
+        "The walk stays off scheduled closures. A closure is a street schedule, not a confirmed sidewalk inspection.",
+    });
+  }
   for (const feature of features) {
     const explicitlyAvoided = requested.has(feature.properties.id);
-    const pedestrianBlocked = feature.properties.pedestrianImpact === "blocked";
-    // The product policy is conservative: every mapped disruption is a
-    // walk-around area. Keep the warning because a roadway/event footprint
-    // still does not prove that the sidewalk is physically closed.
-    hard.push(feature);
-    if (!pedestrianBlocked) {
-      warnings.push({
-        code: "approximate-obstacle",
-        message:
-          explicitlyAvoided
-            ? "A selected disruption is being treated as a walk-around area, but sidewalk access has not been confirmed."
-            : "Mapped disruptions are being treated as walk-around areas, but sidewalk access has not been confirmed.",
-        closureIds: [feature.properties.id],
-      });
+    // Open sidewalks stay available. Every other scheduled closure is kept
+    // off the walking line, including one the walker chose to avoid.
+    if (
+      explicitlyAvoided ||
+      feature.properties.pedestrianImpact !== "open"
+    ) {
+      hard.push(feature);
     }
   }
   return { hard, warnings: dedupeWarnings(warnings) };
@@ -245,6 +245,27 @@ function segmentsIntersect(
   );
 }
 
+export function nearestOpenPoint(
+  coordinate: Coordinate,
+  obstacles: ClosureFeature[],
+): Coordinate | null {
+  const blocked = (point: Coordinate) =>
+    obstacles.some((obstacle) => coordinateInObstacle(point, obstacle));
+  if (!blocked(coordinate)) return coordinate;
+  for (const meters of [35, 60, 90]) {
+    for (let step = 0; step < 8; step += 1) {
+      const radians = (step / 8) * Math.PI * 2;
+      const candidate: Coordinate = [
+        coordinate[0] +
+          (Math.cos(radians) * meters) / longitudeMeters(coordinate[1]),
+        coordinate[1] + (Math.sin(radians) * meters) / METERS_PER_DEGREE,
+      ];
+      if (!blocked(candidate)) return candidate;
+    }
+  }
+  return null;
+}
+
 export function coordinateInObstacle(
   coordinate: Coordinate,
   obstacle: ClosureFeature,
@@ -269,6 +290,62 @@ export function coordinateInObstacle(
     ([start, end]) =>
       pointToSegmentDistanceMeters(coordinate, start, end) <= bufferMeters,
   );
+}
+
+function segmentNearRoute(
+  start: Coordinate,
+  end: Coordinate,
+  route: RouteFeature,
+  maxDistanceMeters: number,
+) {
+  const coordinates = route.geometry.coordinates;
+  for (let index = 1; index < coordinates.length; index += 1) {
+    if (
+      segmentsDistanceMeters(
+        start,
+        end,
+        coordinates[index - 1] as Coordinate,
+        coordinates[index] as Coordinate,
+      ) <= maxDistanceMeters
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Keep only the closed segments the current walk would actually meet, so a
+// long permit does not become a city-sized avoid area.
+export function clipObstacleToRoute(
+  obstacle: ClosureFeature,
+  route: RouteFeature,
+  maxDistanceMeters = 40,
+  keepAwayFrom: Coordinate[] = [],
+): ClosureFeature | null {
+  const clearOfEnds = (start: Coordinate, end: Coordinate) =>
+    keepAwayFrom.every(
+      (point) => pointToSegmentDistanceMeters(point, start, end) > 30,
+    );
+  if (obstacle.geometry.type === "Point") {
+    const point = obstacle.geometry.coordinates as Coordinate;
+    return segmentNearRoute(point, point, route, maxDistanceMeters) &&
+      clearOfEnds(point, point)
+      ? obstacle
+      : null;
+  }
+  const kept = geometrySegments(obstacle.geometry).filter(
+    ([start, end]) =>
+      segmentNearRoute(start, end, route, maxDistanceMeters) &&
+      clearOfEnds(start, end),
+  );
+  if (!kept.length) return null;
+  return {
+    ...obstacle,
+    geometry: {
+      type: "MultiLineString",
+      coordinates: kept.map(([start, end]) => [start, end]),
+    },
+  };
 }
 
 export function routeIntersectsObstacles(

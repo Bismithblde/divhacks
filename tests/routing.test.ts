@@ -63,16 +63,14 @@ test("route validation normalizes departure and rejects out-of-coverage points",
   assert.equal(invalid.ok, false);
 });
 
-test("all mapped disruptions become conservative walk-around obstacles", () => {
+test("scheduled closures are kept off the walking route", () => {
   const uncertain = closure("uncertain");
   const confirmed = closure("confirmed", "blocked");
-  const classified = classifyObstacles(
-    [uncertain, confirmed],
-    ["uncertain"],
-  );
+  const open = closure("open", "open");
+  const classified = classifyObstacles([uncertain, confirmed, open], ["open"]);
   assert.deepEqual(
     classified.hard.map((feature) => feature.properties.id),
-    ["uncertain", "confirmed"],
+    ["uncertain", "confirmed", "open"],
   );
   assert.equal(classified.warnings[0]?.code, "approximate-obstacle");
 });
@@ -114,20 +112,47 @@ test("endpoint checks follow the street geometry instead of its full bounding bo
   assert.equal(coordinateInObstacle([-73.95, 40.8], diagonal), false);
 });
 
-test("routing rejects an origin or destination inside a walk-around area", async () => {
-  await assert.rejects(
-    () =>
-      findWalkingRoute(
-        {
-          origin: [-74.0, 40.72],
-          destination: [-73.985, 40.73],
-          departureTime: "2026-09-26T16:00:00.000Z",
-          mode: "foot-walking",
-        },
-        [closure("blocked", "blocked")],
-      ),
-    /inside a walk-around disruption/,
-  );
+test("a destination on a closure ends at the nearest open point", async () => {
+  const originalKey = process.env.OPENROUTESERVICE_API_KEY;
+  const originalFetch = globalThis.fetch;
+  process.env.OPENROUTESERVICE_API_KEY = "test-key";
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        type: "FeatureCollection",
+        features: [
+          {
+            type: "Feature",
+            geometry: {
+              type: "LineString",
+              coordinates: [
+                [-74.0, 40.72],
+                [-73.985, 40.729],
+              ],
+            },
+            properties: { summary: { duration: 500, distance: 700 } },
+          },
+        ],
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  try {
+    const result = await findWalkingRoute(
+      {
+        origin: [-74.0, 40.72],
+        destination: [-73.985, 40.73],
+        departureTime: "2026-09-26T16:00:00.000Z",
+        mode: "foot-walking",
+      },
+      [closure("blocked", "blocked")],
+    );
+    assert.equal(result.destinationAdjusted, true);
+    assert.equal(result.verified, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.OPENROUTESERVICE_API_KEY;
+    else process.env.OPENROUTESERVICE_API_KEY = originalKey;
+  }
 });
 
 test("walking routing selects the fastest returned route", async () => {
@@ -179,6 +204,7 @@ test("walking routing selects the fastest returned route", async () => {
     assert.equal(result.route.properties.durationSeconds, 600);
     assert.equal(result.route.properties.distanceMeters, 1100);
     assert.equal(result.verificationAttempts, 1);
+    assert.deepEqual(result.avoided, []);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalKey === undefined) delete process.env.OPENROUTESERVICE_API_KEY;

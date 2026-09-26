@@ -137,8 +137,17 @@ export async function POST(request: Request) {
       route: result.route,
       durationSeconds: result.route.properties.durationSeconds,
       distanceMeters: result.route.properties.distanceMeters,
-      avoidedClosures: avoidedClosures(classified.hard),
-      warnings,
+      avoidedClosures: avoidedClosures(result.avoided),
+      warnings: result.destinationAdjusted
+        ? [
+            ...warnings,
+            {
+              code: "uncertain-pedestrian-impact" as const,
+              message:
+                "The place you chose is on a scheduled closure, so the walk ends at the nearest open point.",
+            },
+          ]
+        : warnings,
       meta: {
         ...meta,
         verificationAttempts: result.verificationAttempts,
@@ -159,7 +168,7 @@ export async function POST(request: Request) {
       status:
         providerError.code === "no-route" ? "no-route" : "unavailable",
       error: providerError.message,
-      avoidedClosures: avoidedClosures(classified.hard),
+      avoidedClosures: [],
       warnings,
       meta,
     };
