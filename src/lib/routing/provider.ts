@@ -75,7 +75,8 @@ async function requestRoutes(
     );
   }
   const polygon = buildAvoidancePolygons(obstacles, bufferMeters);
-  const options: Record<string, unknown> = {
+  const payload: Record<string, unknown> = {
+    coordinates: [request.origin, request.destination],
     instructions: false,
     alternative_routes: {
       target_count: 2,
@@ -83,7 +84,9 @@ async function requestRoutes(
       share_factor: 0.6,
     },
   };
-  if (polygon.coordinates.length) options.avoid_polygons = polygon;
+  if (polygon.coordinates.length) {
+    payload.options = { avoid_polygons: polygon };
+  }
 
   let response: Response;
   try {
@@ -93,10 +96,7 @@ async function requestRoutes(
         Authorization: key,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        coordinates: [request.origin, request.destination],
-        options,
-      }),
+      body: JSON.stringify(payload),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       cache: "no-store",
     });
