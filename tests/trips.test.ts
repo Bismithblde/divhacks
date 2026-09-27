@@ -7,8 +7,10 @@ import { validateTripRequest } from "../src/lib/trips/validation";
 import { explainPlan } from "../src/lib/trips/explanation";
 import { MtaBusTimeClient, OpenTripPlannerRouter } from "../src/lib/transit/otp";
 import {
+  dueTransitCheckIn,
   missedTransitDeparture,
   statusForTrip,
+  transitCheckInPrompt,
 } from "../src/lib/trips/active";
 
 const origin: [number, number] = [-73.985, 40.735];
@@ -59,6 +61,24 @@ function itinerary(
     provider: "test",
     sourceFetchedAt: new Date().toISOString(),
   };
+}
+
+function itineraryArriving(
+  id: string,
+  arrival: string,
+  routeName = "L",
+): TransitItinerary {
+  const value = itinerary(id, arrival, routeName);
+  const transitLeg = value.legs[0];
+  value.legs = [
+    {
+      ...transitLeg,
+      endTime: arrival,
+      durationSeconds:
+        (Date.parse(arrival) - Date.parse(transitLeg.startTime)) / 1000,
+    },
+  ];
+  return value;
 }
 
 function dependencies(candidates: TransitItinerary[]): TripPlannerDependencies {
@@ -252,6 +272,48 @@ test("active monitoring detects a missed transit departure after its grace windo
     missedTransitDeparture(service, Date.parse("2026-09-26T12:01:00.000Z")),
     false,
   );
+  assert.equal(
+    missedTransitDeparture(
+      service,
+      Date.parse("2026-09-26T12:02:00.000Z"),
+      true,
+    ),
+    false,
+  );
+});
+
+test("transit arrival check-ins become due once per service leg", () => {
+  const service = leg(
+    "BUS",
+    "2026-09-26T12:00:00.000Z",
+    "2026-09-26T12:30:00.000Z",
+    "M15",
+  );
+  const route = { legs: [service] };
+  assert.equal(
+    dueTransitCheckIn(route, {}, Date.parse("2026-09-26T11:59:59.000Z")),
+    null,
+  );
+  assert.equal(
+    dueTransitCheckIn(route, {}, Date.parse("2026-09-26T12:00:00.000Z"))
+      ?.leg.id,
+    service.id,
+  );
+  assert.equal(transitCheckInPrompt(service), "Is the M15 bus here?");
+  assert.equal(
+    dueTransitCheckIn(
+      route,
+      {
+        [service.id]: {
+          legId: service.id,
+          response: "arrived",
+          respondedAt: "2026-09-26T12:00:01.000Z",
+        },
+      },
+      Date.parse("2026-09-26T12:02:00.000Z"),
+    ),
+    null,
+  );
 });
 
 test("active monitoring reports arrival after the final leg ends", () => {
@@ -408,6 +470,74 @@ test("replanTrip recalculates from the current position and returns an alternate
   );
   assert.equal(result.action, "switch");
   assert.equal(result.recommendedOption?.id, "alternate");
+});
+
+test("a rider-reported late vehicle compares waiting with faster routes", async () => {
+  const current = {
+    ...itinerary("current", "2026-09-26T13:20:00.000Z"),
+    verified: true,
+    blockedLegIds: [],
+    avoidedClosureIds: [],
+    warnings: [],
+  };
+  const result = await replanTrip(
+    {
+      origin,
+      destination,
+      timing: { type: "leave-now" },
+      mode: "transit-walk",
+      constraints: {},
+    },
+    current,
+    origin,
+    dependencies([
+      itineraryArriving("wait-for-l", "2026-09-26T13:20:00.000Z"),
+      itineraryArriving("faster-bus", "2026-09-26T13:08:00.000Z", "M15"),
+    ]),
+    0,
+    {
+      legId: current.legs[0].id,
+      response: "not-arrived",
+      respondedAt: new Date().toISOString(),
+    },
+  );
+  assert.equal(result.reasonCode, "vehicle-not-here");
+  assert.equal(result.action, "switch");
+  assert.equal(result.recommendedOption?.id, "faster-bus");
+});
+
+test("a rider-reported late vehicle recommends waiting when it remains fastest", async () => {
+  const current = {
+    ...itinerary("current", "2026-09-26T13:00:00.000Z"),
+    verified: true,
+    blockedLegIds: [],
+    avoidedClosureIds: [],
+    warnings: [],
+  };
+  const result = await replanTrip(
+    {
+      origin,
+      destination,
+      timing: { type: "leave-now" },
+      mode: "transit-walk",
+      constraints: {},
+    },
+    current,
+    origin,
+    dependencies([
+      itineraryArriving("wait-for-l", "2026-09-26T13:00:00.000Z"),
+      itineraryArriving("slower-bus", "2026-09-26T13:12:00.000Z", "M15"),
+    ]),
+    0,
+    {
+      legId: current.legs[0].id,
+      response: "not-arrived",
+      respondedAt: new Date().toISOString(),
+    },
+  );
+  assert.equal(result.reasonCode, "vehicle-not-here");
+  assert.equal(result.action, "stay");
+  assert.equal(result.recommendedOption?.id, "wait-for-l");
 });
 
 test("deterministic explanation remains honest when there is no plan", () => {

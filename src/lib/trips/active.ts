@@ -1,6 +1,7 @@
 import type {
   ActiveTripStatus,
   RouteOption,
+  TransitCheckIn,
   TripLeg,
 } from "./types";
 
@@ -40,17 +41,48 @@ export function statusForTrip(
 export function missedTransitDeparture(
   leg: TripLeg,
   now = Date.now(),
+  confirmedArrived = false,
 ): boolean {
   return (
+    !confirmedArrived &&
     (leg.mode === "BUS" || leg.mode === "SUBWAY") &&
     Date.parse(leg.startTime) + MISSED_DEPARTURE_GRACE_SECONDS * 1000 < now &&
     Date.parse(leg.endTime) > now
   );
 }
 
+export function transitCheckInPrompt(
+  leg: Pick<TripLeg, "mode" | "routeName">,
+): string {
+  const route = leg.routeName?.trim();
+  if (leg.mode === "BUS") {
+    return route ? `Is the ${route} bus here?` : "Is the bus here?";
+  }
+  return route ? `Did the ${route} train arrive?` : "Did the train arrive?";
+}
+
+export function dueTransitCheckIn(
+  route: Pick<RouteOption, "legs">,
+  checkIns: Record<string, TransitCheckIn> = {},
+  now = Date.now(),
+): { leg: TripLeg; legIndex: number } | null {
+  const legIndex = currentLegIndex(route, now);
+  const leg = route.legs[legIndex];
+  if (
+    !leg ||
+    (leg.mode !== "BUS" && leg.mode !== "SUBWAY") ||
+    checkIns[leg.id] ||
+    Date.parse(leg.startTime) > now ||
+    Date.parse(leg.endTime) <= now
+  ) {
+    return null;
+  }
+  return { leg, legIndex };
+}
+
 export function sameService(
-  left: RouteOption | undefined,
-  right: RouteOption | undefined,
+  left: Pick<RouteOption, "legs"> | undefined,
+  right: Pick<RouteOption, "legs"> | undefined,
 ): boolean {
   if (!left || !right) return false;
   const leftRoutes = left.legs

@@ -315,6 +315,9 @@ test("plans transit alternatives and exposes ordered steps", async ({ page }) =>
   ).toBeVisible();
   await page.locator(".route-option-card").nth(1).click();
   await expect(page.getByText("Take M15 to Times Sq Station.", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Clear route", exact: true }).click();
+  await expect(page.getByTestId("route-options")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Clear route", exact: true })).toHaveCount(0);
 });
 
 test("uses one search while switching between walk and drive", async ({ page }) => {
@@ -396,8 +399,15 @@ test("uses one search while switching between walk and drive", async ({ page }) 
   await expect.poll(() => modes).toEqual(["foot-walking", "driving-car"]);
 });
 
-test("starts a trip, detects a missed train, and offers a switch", async ({ page }) => {
+test("asks whether due transit arrived and offers a faster switch after no", async ({ page }) => {
   await mockBase(page);
+  await page.route("**/api/audio/transit-check-in", async (route) => {
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Voice disabled in test." }),
+    });
+  });
   await page.route("**/api/trips/plan", async (route) => {
     await route.fulfill({
       status: 200,
@@ -406,6 +416,8 @@ test("starts a trip, detects a missed train, and offers a switch", async ({ page
     });
   });
   await page.route("**/api/trips/replan", async (route) => {
+    const request = JSON.parse(route.request().postData() || "{}");
+    expect(request.transitObservation?.response).toBe("not-arrived");
     const replacement = routeOption(
       "bus-replacement",
       "M15",
@@ -462,6 +474,9 @@ test("starts a trip, detects a missed train, and offers a switch", async ({ page
   await page.getByRole("button", { name: "Start this route", exact: true }).click();
   await expect(page.getByTestId("active-trip")).toBeVisible();
   await expect(page.getByTestId("active-trip")).toContainText("Trip in progress");
+  await expect(page.getByTestId("transit-arrival-prompt")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Did the L train arrive?" })).toBeVisible();
+  await page.getByRole("button", { name: "No, it is late" }).click();
   await expect(page.getByTestId("trip-adjustment")).toBeVisible({ timeout: 20_000 });
   await expect(page.getByRole("heading", { name: "Your train was missed" })).toBeVisible();
   await page.locator(".trip-adjustment-option").filter({ hasText: "Switch route" }).click();
@@ -469,6 +484,122 @@ test("starts a trip, detects a missed train, and offers a switch", async ({ page
   expect(
     await page.evaluate(() => sessionStorage.getItem("blockednyc.active-trip.v1")),
   ).toContain("bus-replacement");
+});
+
+test("confirms a due train without replanning and persists the check-in", async ({ page }) => {
+  await mockBase(page);
+  const audioKinds: string[] = [];
+  await page.route("**/api/audio/transit-check-in", async (route) => {
+    audioKinds.push(JSON.parse(route.request().postData() || "{}").kind);
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Voice disabled in test." }),
+    });
+  });
+  await page.route("**/api/trips/plan", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(planFixture(true)),
+    });
+  });
+  let replanCalls = 0;
+  await page.route("**/api/trips/replan", async (route) => {
+    replanCalls += 1;
+    await route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Should not replan." }),
+    });
+  });
+
+  await page.goto("/map");
+  await chooseDestination(page);
+  await page.getByRole("button", { name: "Find transit route", exact: true }).click();
+  await page.getByRole("button", { name: "Start this route", exact: true }).click();
+  await expect(page.getByTestId("transit-arrival-prompt")).toBeVisible();
+  await expect.poll(() => audioKinds).toContain("route-started");
+  const mute = page.getByRole("button", { name: "Mute trip audio" });
+  await expect(mute).toBeVisible();
+  const muteBounds = await mute.boundingBox();
+  const stopBounds = await page
+    .getByRole("button", { name: "Stop", exact: true })
+    .boundingBox();
+  expect(muteBounds?.width).toBeGreaterThanOrEqual(44);
+  expect(muteBounds?.height).toBeGreaterThanOrEqual(44);
+  expect(stopBounds?.width).toBeGreaterThanOrEqual(44);
+  expect(stopBounds?.height).toBeGreaterThanOrEqual(44);
+  await mute.click();
+  await expect(page.getByRole("button", { name: "Unmute trip audio" })).toBeVisible();
+  await page.getByRole("button", { name: "Yes, it is here" }).click();
+  await expect(page.getByTestId("transit-arrival-prompt")).toHaveCount(0);
+  const saved = await page.evaluate(() =>
+    sessionStorage.getItem("blockednyc.active-trip.v1"),
+  );
+  expect(saved).toContain('"response":"arrived"');
+  expect(replanCalls).toBe(0);
+});
+
+test("recommends waiting when a late train route is still fastest", async ({ page }) => {
+  await mockBase(page);
+  await page.route("**/api/audio/transit-check-in", async (route) => {
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Voice disabled in test." }),
+    });
+  });
+  const current = planFixture(true).plan;
+  await page.route("**/api/trips/plan", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(planFixture(true)),
+    });
+  });
+  await page.route("**/api/trips/replan", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        action: "stay",
+        reasonCode: "vehicle-not-here",
+        currentOption: current,
+        recommendedOption: current,
+        alternatives: [],
+        options: [
+          {
+            id: "keep-current",
+            action: "keep-current",
+            label: "Keep current route",
+            description: "Waiting remains the fastest option.",
+            recommended: true,
+            option: current,
+          },
+        ],
+        warnings: [],
+        explanation: {
+          headline: "Waiting is still fastest",
+          action: "stay",
+          reason: "Another route would arrive later.",
+          steps: ["Wait for the next L train."],
+          caveats: [],
+          provider: "deterministic-template",
+        },
+      }),
+    });
+  });
+
+  await page.goto("/map");
+  await chooseDestination(page);
+  await page.getByRole("button", { name: "Find transit route", exact: true }).click();
+  await page.getByRole("button", { name: "Start this route", exact: true }).click();
+  await page.getByRole("button", { name: "No, it is late" }).click();
+  await expect(page.getByRole("heading", { name: "Waiting is still fastest" })).toBeVisible();
+  await expect(
+    page.locator(".trip-adjustment-option.recommended").filter({ hasText: "Keep current route" }),
+  ).toBeVisible();
 });
 
 test("shows a safe failure when transit planning is unavailable", async ({ page }) => {

@@ -1,12 +1,17 @@
 "use client";
 
+import { useEffect } from "react";
 import {
   ArrowRight,
   BusFront,
+  Check,
   CheckCircle2,
   Footprints,
+  LoaderCircle,
   RefreshCw,
   TrainFront,
+  Volume2,
+  VolumeX,
   X,
 } from "lucide-react";
 import type {
@@ -15,6 +20,13 @@ import type {
   TripDecisionOption,
   TripLeg,
 } from "@/lib/trips/types";
+import { transitCheckInPrompt } from "@/lib/trips/active";
+import {
+  playTripVoice,
+  stopTripVoice,
+} from "@/lib/audio/trip-voice";
+
+const playedCheckIns = new Set<string>();
 
 function time(value: string) {
   return new Intl.DateTimeFormat("en-US", {
@@ -32,9 +44,13 @@ function legIcon(leg: TripLeg) {
 
 export function ActiveTripBanner({
   trip,
+  muted,
+  onToggleMute,
   onStop,
 }: {
   trip: ActiveTrip;
+  muted: boolean;
+  onToggleMute: () => void;
   onStop: () => void;
 }) {
   const leg = trip.route.legs[trip.currentLegIndex] || trip.route.legs[0];
@@ -55,10 +71,118 @@ export function ActiveTripBanner({
             : `${Math.max(0, Math.round(trip.route.arrivalBufferSeconds / 60))} min buffer`}
         </small>
       </div>
-      <button type="button" className="active-trip-stop" onClick={onStop}>
-        Stop
-      </button>
+      <div className="active-trip-controls">
+        <button
+          type="button"
+          className="active-trip-audio"
+          onClick={onToggleMute}
+          aria-label={muted ? "Unmute trip audio" : "Mute trip audio"}
+          aria-pressed={muted}
+        >
+          {muted ? (
+            <VolumeX size={17} aria-hidden="true" />
+          ) : (
+            <Volume2 size={17} aria-hidden="true" />
+          )}
+        </button>
+        <button type="button" className="active-trip-stop" onClick={onStop}>
+          Stop
+        </button>
+      </div>
     </div>
+  );
+}
+
+export function TransitArrivalPrompt({
+  leg,
+  muted,
+  loading,
+  error,
+  onArrived,
+  onMissing,
+}: {
+  leg: TripLeg;
+  muted: boolean;
+  loading: boolean;
+  error: string;
+  onArrived: () => void;
+  onMissing: () => void;
+}) {
+  const prompt = transitCheckInPrompt(leg);
+
+  useEffect(() => {
+    if (muted || playedCheckIns.has(leg.id)) return;
+    const controller = new AbortController();
+    const play = async () => {
+      await playTripVoice(
+        {
+          kind: "transit-check-in",
+          mode: leg.mode as "BUS" | "SUBWAY",
+          routeName: leg.routeName,
+        },
+        prompt,
+        controller.signal,
+      );
+      if (!controller.signal.aborted) {
+        playedCheckIns.add(leg.id);
+      }
+    };
+    void play();
+    return () => {
+      controller.abort();
+      stopTripVoice();
+    };
+  }, [leg.id, leg.mode, leg.routeName, muted, prompt]);
+
+  return (
+    <section
+      className="transit-arrival-prompt"
+      role="alertdialog"
+      aria-labelledby="transit-arrival-title"
+      aria-describedby={error ? "transit-arrival-error" : undefined}
+      data-testid="transit-arrival-prompt"
+    >
+      <div className="transit-arrival-heading">
+        <span className="transit-arrival-icon">
+          <Volume2 size={18} aria-hidden="true" />
+        </span>
+        <div>
+          <span className="active-trip-kicker">Arrival check</span>
+          <h2 id="transit-arrival-title">{prompt}</h2>
+        </div>
+      </div>
+      <div className="transit-arrival-actions">
+        <button
+          type="button"
+          className="button primary"
+          onClick={onArrived}
+          disabled={loading}
+          aria-label="Yes, it is here"
+        >
+          <Check size={18} aria-hidden="true" />
+          Yes
+        </button>
+        <button
+          type="button"
+          className="button secondary"
+          onClick={onMissing}
+          disabled={loading}
+          aria-label="No, it is late"
+        >
+          {loading ? (
+            <LoaderCircle className="spin" size={18} aria-hidden="true" />
+          ) : (
+            <X size={18} aria-hidden="true" />
+          )}
+          {loading ? "Checking routes" : "No"}
+        </button>
+      </div>
+      {error && (
+        <p id="transit-arrival-error" className="transit-arrival-error" role="alert">
+          {error}
+        </p>
+      )}
+    </section>
   );
 }
 

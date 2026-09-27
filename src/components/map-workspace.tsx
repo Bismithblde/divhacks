@@ -71,17 +71,24 @@ import type {
 import type {
   ActiveTrip,
   RouteOption,
+  TransitCheckIn,
   TripDecision,
   TripPlanResponse,
 } from "@/lib/trips/types";
 import { routeStepsForLeg } from "@/lib/trips/steps";
+import {
+  playTripVoice,
+  stopTripVoice,
+} from "@/lib/audio/trip-voice";
 import { RouteOptionsDrawer } from "./route-options-drawer";
 import {
   ActiveTripBanner,
+  TransitArrivalPrompt,
   TripAdjustmentPrompt,
 } from "./active-trip-panel";
 import {
   currentLegIndex,
+  dueTransitCheckIn,
   statusForTrip,
 } from "@/lib/trips/active";
 import {
@@ -252,9 +259,11 @@ export function MapWorkspace() {
   const [forecast, setForecast] = useState<ForecastApiResponse | null>(null);
   const [forecastLoading, setForecastLoading] = useState(false);
   const [forecastError, setForecastError] = useState("");
+  const [forecastRefresh, setForecastRefresh] = useState(0);
   const [query, setQuery] = useState("");
   const search = useDeferredValue(query.trim().toLowerCase());
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const closurePanelRef = useRef<HTMLElement | null>(null);
   const [bounds, setBounds] = useState<number[] | null>(null);
   const [onlyVisible, setOnlyVisible] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -293,8 +302,13 @@ export function MapWorkspace() {
   );
   const [activeTrip, setActiveTrip] = useState<ActiveTrip | null>(null);
   const [tripDecision, setTripDecision] = useState<TripDecision | null>(null);
+  const [tripClock, setTripClock] = useState(() => Date.now());
+  const [transitCheckInLoading, setTransitCheckInLoading] = useState(false);
+  const [transitCheckInError, setTransitCheckInError] = useState("");
+  const [tripAudioMuted, setTripAudioMuted] = useState(false);
   const activeTripRef = useRef<ActiveTrip | null>(null);
   const tripDecisionRef = useRef<TripDecision | null>(null);
+  const activeTripId = activeTrip?.id;
   const [sessionReady, setSessionReady] = useState(false);
   const [routeResponse, setRouteResponse] = useState<RouteResponse | null>(
     null,
@@ -329,6 +343,16 @@ export function MapWorkspace() {
   useEffect(() => {
     tripDecisionRef.current = tripDecision;
   }, [tripDecision]);
+
+  useEffect(() => {
+    if (!activeTripId) return;
+    const initial = window.setTimeout(() => setTripClock(Date.now()), 0);
+    const interval = window.setInterval(() => setTripClock(Date.now()), 1_000);
+    return () => {
+      window.clearTimeout(initial);
+      window.clearInterval(interval);
+    };
+  }, [activeTripId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -391,6 +415,15 @@ export function MapWorkspace() {
       const now = Date.now();
       const legIndex = currentLegIndex(current.route, now);
       if (!current.route.legs[legIndex]) return;
+      if (
+        dueTransitCheckIn(
+          current.route,
+          current.transitCheckIns || {},
+          now,
+        )
+      ) {
+        return;
+      }
       let currentPosition = current.currentPosition;
       try {
         const position = await new Promise<GeolocationPosition>(
@@ -444,6 +477,8 @@ export function MapWorkspace() {
             currentLegIndex: legIndex,
             lastDecisionAt: current.lastDecisionAt,
             currentPlan: current.route,
+            transitObservation:
+              current.transitCheckIns?.[current.route.legs[legIndex].id],
           }),
         });
         const body = (await response.json()) as TripDecision;
@@ -549,7 +584,7 @@ export function MapWorkspace() {
     };
     void load();
     return () => controller.abort();
-  }, [forecastDate]);
+  }, [forecastDate, forecastRefresh]);
 
   const predictions = useMemo(
     () =>
@@ -646,6 +681,11 @@ export function MapWorkspace() {
     setSourcesOpen(false);
     setExpanded(true);
   }, []);
+  useEffect(() => {
+    if (!selectedId || window.innerWidth > 760) return;
+    window.scrollTo(0, 0);
+    if (closurePanelRef.current) closurePanelRef.current.scrollTop = 0;
+  }, [selectedId]);
   const cacheEventSummary = useCallback(
     (id: string, summary: EventSummary) => {
       setEventSummaries((current) =>
@@ -855,6 +895,9 @@ export function MapWorkspace() {
     }
   };
   const startTrip = async (option: RouteOption) => {
+    if (!tripAudioMuted) {
+      void playTripVoice({ kind: "route-started" }, "Route started.");
+    }
     let currentPosition: Coordinate = [
       DEMO_LOCATION.longitude,
       DEMO_LOCATION.latitude,
@@ -891,8 +934,10 @@ export function MapWorkspace() {
         statusForTrip(option, currentLegIndex, now),
       lastCheckedAt: null,
       lastDecisionAt: null,
+      transitCheckIns: {},
     });
     setTripDecision(null);
+    setTransitCheckInError("");
     setRoute(tripRouteFeature(option));
     setSelectedTripId(option.id);
     setExpanded(false);
@@ -1058,6 +1103,106 @@ export function MapWorkspace() {
       setRouteLoading(false);
     }
   };
+  const confirmTransitArrival = () => {
+    if (!activeTrip) return;
+    const due = dueTransitCheckIn(
+      activeTrip.route,
+      activeTrip.transitCheckIns || {},
+      Date.now(),
+    );
+    if (!due) return;
+    const checkIn: TransitCheckIn = {
+      legId: due.leg.id,
+      response: "arrived",
+      respondedAt: new Date().toISOString(),
+    };
+    setActiveTrip((current) =>
+      current
+        ? {
+            ...current,
+            currentLegIndex: due.legIndex,
+            status: "riding",
+            transitCheckIns: {
+              ...(current.transitCheckIns || {}),
+              [due.leg.id]: checkIn,
+            },
+          }
+        : current,
+    );
+    setTransitCheckInError("");
+  };
+  const reportTransitMissing = async () => {
+    if (!activeTrip || !destination || transitCheckInLoading) return;
+    const due = dueTransitCheckIn(
+      activeTrip.route,
+      activeTrip.transitCheckIns || {},
+      Date.now(),
+    );
+    if (!due) return;
+    const checkIn: TransitCheckIn = {
+      legId: due.leg.id,
+      response: "not-arrived",
+      respondedAt: new Date().toISOString(),
+    };
+    const mode = activeTrip.route.legs.some(
+      (leg) => leg.mode === "BUS" || leg.mode === "SUBWAY",
+    )
+      ? "transit-walk"
+      : activeTrip.route.legs.some((leg) => leg.mode === "DRIVE")
+        ? "driving-car"
+        : "foot-walking";
+    setTransitCheckInLoading(true);
+    setTransitCheckInError("");
+    try {
+      const response = await fetch("/api/trips/replan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          request: {
+            origin: activeTrip.currentPosition,
+            destination,
+            destinationLabel: activeTrip.destinationLabel,
+            timing: { type: "depart-at", time: new Date().toISOString() },
+            mode,
+            constraints: { maxTransfers: 3 },
+            accessOverrides: Object.entries(eventAccessOverrides).map(
+              ([closureId, access]) => ({ closureId, access }),
+            ),
+          },
+          currentPosition: activeTrip.currentPosition,
+          currentLegIndex: due.legIndex,
+          lastDecisionAt: activeTrip.lastDecisionAt,
+          currentPlan: activeTrip.route,
+          transitObservation: checkIn,
+        }),
+      });
+      const body = (await response.json()) as TripDecision & { error?: string };
+      if (!response.ok) {
+        throw new Error(body.error || "Routes could not be checked.");
+      }
+      setActiveTrip((current) =>
+        current
+          ? {
+              ...current,
+              transitCheckIns: {
+                ...(current.transitCheckIns || {}),
+                [due.leg.id]: checkIn,
+              },
+              lastCheckedAt: new Date().toISOString(),
+            }
+          : current,
+      );
+      setTripDecision(body);
+    } catch (error) {
+      setTransitCheckInError(
+        error instanceof Error
+          ? error.message
+          : "Routes could not be checked. Try again.",
+      );
+    } finally {
+      setTransitCheckInLoading(false);
+    }
+  };
   const sourceWarning = data?.meta.sources.some(
     (s) => s.status !== "ok" || s.unmapped > 0,
   );
@@ -1121,6 +1266,13 @@ export function MapWorkspace() {
   const displayedRouteLines = activeTrip
     ? tripRouteLines([activeTrip.route], activeTrip.route.id)
     : mapRouteLines;
+  const pendingTransitCheckIn = activeTrip
+    ? dueTransitCheckIn(
+        activeTrip.route,
+        activeTrip.transitCheckIns || {},
+        tripClock,
+      )
+    : null;
   const selectedTrip = displayOptions.find(
     (option) => option.id === selectedTripId,
   );
@@ -1217,10 +1369,29 @@ export function MapWorkspace() {
           {activeTrip && (
             <ActiveTripBanner
               trip={activeTrip}
+              muted={tripAudioMuted}
+              onToggleMute={() => {
+                setTripAudioMuted((muted) => {
+                  if (!muted) stopTripVoice();
+                  return !muted;
+                });
+              }}
               onStop={() => {
+                stopTripVoice();
                 setActiveTrip(null);
                 setTripDecision(null);
+                setTransitCheckInError("");
               }}
+            />
+          )}
+          {pendingTransitCheckIn && !tripDecision && (
+            <TransitArrivalPrompt
+              leg={pendingTransitCheckIn.leg}
+              muted={tripAudioMuted}
+              loading={transitCheckInLoading}
+              error={transitCheckInError}
+              onArrived={confirmTransitArrival}
+              onMissing={() => void reportTransitMissing()}
             />
           )}
           {tripDecision && (
@@ -1351,6 +1522,7 @@ export function MapWorkspace() {
           </div>
         </section>
         <aside
+          ref={closurePanelRef}
           id="closure-panel"
           tabIndex={-1}
           className={`closure-panel ${
@@ -1733,6 +1905,14 @@ export function MapWorkspace() {
                       <div>
                         <strong>Couldn’t load predictions</strong>
                         <p>{forecastError}</p>
+                        <button
+                          className="inline-alert-action"
+                          type="button"
+                          onClick={() => setForecastRefresh((value) => value + 1)}
+                          disabled={forecastLoading}
+                        >
+                          Try again
+                        </button>
                       </div>
                     </div>
                   ) : forecastLoading && !forecast ? (

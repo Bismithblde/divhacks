@@ -25,10 +25,20 @@ export async function POST(request: Request) {
   }
   const input = body as Partial<ReplanRequest>;
   const validation = validateTripRequest(input.request);
+  const observation = input.transitObservation;
+  const validObservation =
+    !observation ||
+    (typeof observation.legId === "string" &&
+      (observation.response === "arrived" ||
+        observation.response === "not-arrived") &&
+      Number.isFinite(Date.parse(observation.respondedAt || "")) &&
+      Array.isArray(input.currentPlan?.legs) &&
+      input.currentPlan.legs.some((leg) => leg.id === observation.legId));
   if (
     !validation.ok ||
     !isInTripBounds(input.currentPosition) ||
-    !input.currentPlan
+    !input.currentPlan ||
+    !validObservation
   ) {
     return Response.json(
       {
@@ -36,7 +46,9 @@ export async function POST(request: Request) {
         error:
           !validation.ok
             ? validation.error
-            : "Current position and current plan are required.",
+            : !validObservation
+              ? "The transit observation is invalid."
+              : "Current position and current plan are required.",
       },
       { status: 400 },
     );
@@ -53,6 +65,7 @@ export async function POST(request: Request) {
       currentPosition,
       defaultTripDependencies(),
       Number.isFinite(parsedLastDecisionAt) ? parsedLastDecisionAt : 0,
+      observation || null,
     );
     return Response.json(response, {
       headers: { "Cache-Control": "no-store" },

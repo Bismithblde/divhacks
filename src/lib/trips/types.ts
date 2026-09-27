@@ -175,6 +175,14 @@ export type ActiveTripStatus =
   | "arrived"
   | "stopped";
 
+export type TransitCheckInResponse = "arrived" | "not-arrived";
+
+export type TransitCheckIn = {
+  legId: string;
+  response: TransitCheckInResponse;
+  respondedAt: string;
+};
+
 export type ActiveTrip = {
   id: string;
   startedAt: string;
@@ -185,6 +193,7 @@ export type ActiveTrip = {
   status: ActiveTripStatus;
   lastCheckedAt: string | null;
   lastDecisionAt: string | null;
+  transitCheckIns?: Record<string, TransitCheckIn>;
 };
 
 export type TripExplanation = {
@@ -224,6 +233,7 @@ export type TripDecision = {
     | "missed-departure"
     | "service-cancelled"
     | "service-late"
+    | "vehicle-not-here"
     | "data-too-stale"
     | "no-feasible-alternative";
   currentOption?: ScoredItinerary;
@@ -253,6 +263,7 @@ export type ReplanRequest = {
   currentLegIndex: number;
   currentPlan: VerifiedItinerary;
   lastDecisionAt?: string | null;
+  transitObservation?: TransitCheckIn;
 };
 
 export type WalkingRouteResult = {

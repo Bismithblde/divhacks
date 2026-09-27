@@ -31,6 +31,7 @@ import type {
   TripPlanResponse,
   TripPlannerDependencies,
   TripRequest,
+  TransitCheckIn,
   TripWarning,
   VerifiedItinerary,
 } from "./types";
@@ -275,13 +276,18 @@ export async function planTrip(
 }
 
 type Disruption = {
-  reasonCode: "missed-departure" | "service-cancelled" | "service-late";
+  reasonCode:
+    | "missed-departure"
+    | "service-cancelled"
+    | "service-late"
+    | "vehicle-not-here";
 } | null;
 
 const DecisionState = Annotation.Root({
   request: Annotation<TripRequest>(),
   currentPlan: Annotation<VerifiedItinerary>(),
   currentPosition: Annotation<[number, number]>(),
+  transitObservation: last<TransitCheckIn | null>(() => null),
   lastDecisionAt: Annotation<number>({
     reducer: (_left, right) => right,
     default: () => 0,
@@ -311,9 +317,22 @@ function classifyDisruption(
   plan: VerifiedItinerary,
   activeLeg: TripLeg | null,
   now: number,
+  observation: TransitCheckIn | null,
 ): Disruption {
   if (cancelledService(plan)) return { reasonCode: "service-cancelled" };
-  if (activeLeg && missedTransitDeparture(activeLeg, now)) {
+  const appliesToActiveLeg =
+    Boolean(activeLeg) && observation?.legId === activeLeg?.id;
+  if (appliesToActiveLeg && observation?.response === "not-arrived") {
+    return { reasonCode: "vehicle-not-here" };
+  }
+  if (
+    activeLeg &&
+    missedTransitDeparture(
+      activeLeg,
+      now,
+      appliesToActiveLeg && observation?.response === "arrived",
+    )
+  ) {
     return { reasonCode: "missed-departure" };
   }
   if (
@@ -404,6 +423,7 @@ function createDecisionGraph(dependencies: TripPlannerDependencies) {
         state.currentPlan,
         state.activeLeg,
         state.now,
+        state.transitObservation,
       ),
     }))
     .addNode("queryAlternatives", async (state) => ({
@@ -424,11 +444,19 @@ function createDecisionGraph(dependencies: TripPlannerDependencies) {
           },
         };
       }
+      const candidates = [response.plan, ...response.alternatives];
+      const vehicleMissing =
+        state.disruption?.reasonCode === "vehicle-not-here";
+      const freshCurrent = vehicleMissing
+        ? candidates.find((candidate) =>
+            sameService(state.currentPlan, candidate),
+          ) || null
+        : current;
       return {
-        currentScored: current,
+        currentScored: freshCurrent || current,
         decision: chooseDecision(
-          current,
-          [response.plan, ...response.alternatives],
+          freshCurrent,
+          candidates.filter((candidate) => candidate.id !== freshCurrent?.id),
           state.now,
           state.lastDecisionAt,
         ),
@@ -446,6 +474,14 @@ function createDecisionGraph(dependencies: TripPlannerDependencies) {
             action: "stay" as const,
             reasonCode: "current-plan-still-best" as const,
             recommendedOption: state.currentScored || decision.currentOption,
+          },
+        };
+      }
+      if (state.disruption?.reasonCode === "vehicle-not-here") {
+        return {
+          decision: {
+            ...decision,
+            reasonCode: "vehicle-not-here" as const,
           },
         };
       }
@@ -514,6 +550,7 @@ export async function replanTrip(
   currentPosition: [number, number],
   dependencies: TripPlannerDependencies,
   lastDecisionAt = 0,
+  transitObservation: TransitCheckIn | null = null,
 ) {
   const graph = createDecisionGraph(dependencies);
   const result = await graph.invoke({
@@ -521,6 +558,7 @@ export async function replanTrip(
     currentPlan,
     currentPosition,
     lastDecisionAt,
+    transitObservation,
     now: Date.now(),
   });
   return (
