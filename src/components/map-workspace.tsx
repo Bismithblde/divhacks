@@ -63,6 +63,7 @@ import {
   type ForecastApiPrediction,
   type ForecastApiResponse,
 } from "@/lib/forecast/client";
+import { SignOutButton } from "@/components/sign-out-button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import type {
   GeocodeResponse,
@@ -1349,6 +1350,7 @@ export function MapWorkspace() {
             Data sources
           </button>
           <ThemeToggle />
+          <SignOutButton />
         </nav>
       </header>
       <main className="workspace">

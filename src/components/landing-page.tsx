@@ -8,11 +8,23 @@ import {
   ArrowRight,
   ArrowUpRight,
 } from "lucide-react";
-import { useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { SignOutButton } from "@/components/sign-out-button";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { createClient } from "@/lib/supabase/client";
+import { getSupabaseConfig } from "@/lib/supabase/config";
 
 export function LandingPage() {
   const pageRef = useRef<HTMLElement>(null);
+  const [signedIn, setSignedIn] = useState(false);
+
+  useEffect(() => {
+    if (!getSupabaseConfig()) return;
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data }) => {
+      setSignedIn(Boolean(data.user));
+    });
+  }, []);
 
   useLayoutEffect(() => {
     const page = pageRef.current;
@@ -263,13 +275,24 @@ export function LandingPage() {
 
         <div className="landing-nav-actions">
           <ThemeToggle />
-          <Link href="/auth?mode=signin" className="landing-sign-in">
-            Sign in
-          </Link>
-          <Link href="/auth?mode=signup" className="button-primary landing-nav-cta">
-            Get started
-            <ArrowUpRight size={15} aria-hidden="true" />
-          </Link>
+          {signedIn ? (
+            <>
+              <Link href="/map" className="landing-sign-in">
+                Open map
+              </Link>
+              <SignOutButton className="button-primary landing-nav-cta" />
+            </>
+          ) : (
+            <>
+              <Link href="/auth?mode=signin" className="landing-sign-in">
+                Sign in
+              </Link>
+              <Link href="/auth?mode=signup" className="button-primary landing-nav-cta">
+                Get started
+                <ArrowUpRight size={15} aria-hidden="true" />
+              </Link>
+            </>
+          )}
         </div>
       </header>
 
@@ -284,7 +307,7 @@ export function LandingPage() {
             fastest next option.
           </p>
           <div className="landing-hero-actions" data-landing-hero>
-            <Link href="/auth?mode=signup" className="button-primary">
+            <Link href={signedIn ? "/map" : "/auth?mode=signup"} className="button-primary">
               Start planning
               <ArrowRight size={17} aria-hidden="true" />
             </Link>
@@ -425,8 +448,8 @@ export function LandingPage() {
 
       <section className="landing-cta" data-landing-reveal>
         <h2>Leave room for the city to change.</h2>
-        <Link href="/auth?mode=signup" className="button-primary">
-          Get started with Wrap
+        <Link href={signedIn ? "/map" : "/auth?mode=signup"} className="button-primary">
+          {signedIn ? "Open the map" : "Get started with Wrap"}
           <ArrowUpRight size={17} aria-hidden="true" />
         </Link>
       </section>
@@ -437,8 +460,14 @@ export function LandingPage() {
           Wrap
         </Link>
         <div>
-          <Link href="/auth?mode=signin">Sign in</Link>
-          <Link href="/auth?mode=signup">Create account</Link>
+          {signedIn ? (
+            <SignOutButton className="landing-sign-in" />
+          ) : (
+            <>
+              <Link href="/auth?mode=signin">Sign in</Link>
+              <Link href="/auth?mode=signup">Create account</Link>
+            </>
+          )}
         </div>
       </footer>
     </main>

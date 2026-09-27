@@ -45,7 +45,12 @@ export async function proxy(request: NextRequest) {
     return withRefreshedCookies(response, NextResponse.redirect(loginUrl));
   }
 
-  if (pathname.startsWith("/auth") && pathname !== "/auth/callback" && user) {
+  if (
+    pathname.startsWith("/auth") &&
+    pathname !== "/auth/callback" &&
+    pathname !== "/auth/signout" &&
+    user
+  ) {
     return withRefreshedCookies(response, NextResponse.redirect(new URL("/map", request.url)));
   }
 

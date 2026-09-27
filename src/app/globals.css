@@ -246,6 +246,27 @@ svg {
   color: var(--foreground);
   background: var(--surface-muted);
 }
+.sign-out-form {
+  display: flex;
+  align-items: center;
+}
+.sign-out-button {
+  align-self: center;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+.sign-out-button:hover {
+  background: var(--surface-muted);
+}
+.sign-out-button:disabled {
+  opacity: 0.6;
+}
 .theme-toggle {
   display: inline-flex;
   align-items: center;
@@ -3181,11 +3202,17 @@ svg {
 }
 .landing-nav-links a,
 .landing-sign-in,
-.landing-footer a {
+.landing-footer a,
+button.landing-sign-in {
   color: var(--muted);
   font-size: 0.875rem;
   font-weight: 500;
   text-decoration: none;
+}
+button.landing-sign-in {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
 }
 .landing-nav-links a:hover,
 .landing-sign-in:hover,
