@@ -8,6 +8,13 @@ export const NYC_ROUTE_BOUNDS = {
 };
 
 const MAX_AVOID_CLOSURES = 40;
+const MAX_ACCESS_OVERRIDES = 20;
+const ACCESS_OVERRIDES = new Set([
+  "no-closure",
+  "roads-closed",
+  "sidewalk-closed",
+  "sidewalk-crowded",
+]);
 
 export type RouteValidationResult =
   | { ok: true; request: RouteRequest; departure: number }
@@ -73,6 +80,24 @@ export function validateRouteRequest(body: unknown): RouteValidationResult {
   ) {
     return { ok: false, error: "The requested obstacle list is invalid." };
   }
+  const accessOverrides = value.accessOverrides || [];
+  if (
+    !Array.isArray(accessOverrides) ||
+    accessOverrides.length > MAX_ACCESS_OVERRIDES ||
+    accessOverrides.some(
+      (override) =>
+        !override ||
+        typeof override !== "object" ||
+        typeof override.closureId !== "string" ||
+        override.closureId.length === 0 ||
+        override.closureId.length > 120 ||
+        !ACCESS_OVERRIDES.has(override.access),
+    ) ||
+    new Set(accessOverrides.map((override) => override.closureId)).size !==
+      accessOverrides.length
+  ) {
+    return { ok: false, error: "The event access overrides are invalid." };
+  }
   return {
     ok: true,
     request: {
@@ -81,6 +106,7 @@ export function validateRouteRequest(body: unknown): RouteValidationResult {
       departureTime: new Date(departure).toISOString(),
       mode: value.mode,
       avoidClosureIds,
+      accessOverrides,
     },
     departure,
   };

@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const OPENROUTESERVICE_GEOCODE_URL =
-  "https://api.openrouteservice.org/geocode/search";
+  "https://api.heigit.org/pelias/v1/search";
 const MAX_QUERY_LENGTH = 120;
 const MAX_RESULTS = 5;
 

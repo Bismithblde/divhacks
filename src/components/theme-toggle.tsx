@@ -13,7 +13,8 @@ export function ThemeToggle() {
   const [theme, setTheme] = useState<Theme | null>(null);
 
   useEffect(() => {
-    setTheme(currentTheme());
+    const timer = window.setTimeout(() => setTheme(currentTheme()), 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   const dark = theme === "dark";

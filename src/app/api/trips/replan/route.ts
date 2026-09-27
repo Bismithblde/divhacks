@@ -43,12 +43,16 @@ export async function POST(request: Request) {
   }
   const currentPosition = input.currentPosition;
   const currentPlan = input.currentPlan;
+  const parsedLastDecisionAt = input.lastDecisionAt
+    ? Date.parse(input.lastDecisionAt)
+    : 0;
   try {
     const response = await replanTrip(
       validation.request,
       currentPlan,
       currentPosition,
       defaultTripDependencies(),
+      Number.isFinite(parsedLastDecisionAt) ? parsedLastDecisionAt : 0,
     );
     return Response.json(response, {
       headers: { "Cache-Control": "no-store" },

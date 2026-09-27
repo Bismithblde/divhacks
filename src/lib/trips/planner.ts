@@ -12,6 +12,7 @@ import type {
   VerifiedItinerary,
 } from "./types";
 import { compareItineraries } from "./scoring";
+import { routeStepsForLeg } from "./steps";
 import { timingDeadline, timingDeparture } from "./validation";
 
 function routeForLeg(leg: TripLeg) {
@@ -69,9 +70,15 @@ function snapshotWarnings(
           },
         ]),
     ...classifiedWarnings.map((warning) => ({
-      code: "walking-access-uncertain" as const,
+      code:
+        warning.code === "user-access-override"
+          ? ("user-access-override" as const)
+          : ("walking-access-uncertain" as const),
       message: warning.message,
-      source: "NYC closure feeds",
+      source:
+        warning.code === "user-access-override"
+          ? "Your session"
+          : "NYC closure feeds",
     })),
   ];
 }
@@ -83,7 +90,12 @@ export async function verifyItinerary(
   snapshot: import("./types").MobilitySnapshot,
 ): Promise<VerifiedItinerary> {
   const closures = relevantClosures(snapshot.closures, itinerary);
-  const classified = classifyObstacles(closures, [], "foot-walking");
+  const classified = classifyObstacles(
+    closures,
+    [],
+    "foot-walking",
+    request.accessOverrides,
+  );
   const warnings: TripWarning[] = snapshotWarnings(
     snapshot.complete,
     classified.warnings,
@@ -185,6 +197,7 @@ export async function directRouteCandidate(
     request.destination,
     new Date(departure).toISOString(),
     snapshot.closures,
+    request.accessOverrides,
   );
   const end = departure + repair.route.properties.durationSeconds * 1000;
   const leg: TripLeg = {
@@ -198,10 +211,13 @@ export async function directRouteCandidate(
     startTime: new Date(departure).toISOString(),
     endTime: new Date(end).toISOString(),
     durationSeconds: repair.route.properties.durationSeconds,
+    distanceMeters: repair.route.properties.distanceMeters,
     geometry: repair.route.geometry,
+    instructions: repair.route.properties.instructions,
     status: repair.status === "clear" ? "realtime" : "stale",
     realtimeSource: "OpenRouteService",
   };
+  leg.steps = routeStepsForLeg(leg);
   const itinerary: TransitItinerary = {
     id: mode === "driving-car" ? "direct-driving" : "direct-walking",
     legs: [leg],

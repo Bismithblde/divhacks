@@ -1,0 +1,22 @@
+{
+  "updaters": [
+    {
+      "type": "stop-time-updater",
+      "frequencySec": 30,
+      "url": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs",
+      "feedId": "nyct",
+      "httpHeaders": {
+        "x-api-key": "${MTA_GTFS_REALTIME_API_KEY}"
+      }
+    },
+    {
+      "type": "real-time-alerts",
+      "frequencySec": 60,
+      "url": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs",
+      "feedId": "nyct",
+      "httpHeaders": {
+        "x-api-key": "${MTA_GTFS_REALTIME_API_KEY}"
+      }
+    }
+  ]
+}

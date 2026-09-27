@@ -10,8 +10,8 @@ typed GraphQL adapter.
    the [MTA developer resources](https://www.mta.info/developers).
 2. Download an OSM extract covering the five boroughs.
 3. Build an OpenTripPlanner 2 graph from those files.
-4. Configure the MTA subway GTFS-Realtime trip-update and alert feeds as OTP
-   realtime updaters.
+4. Copy `router-config.json` into the OTP data directory and configure the MTA
+   subway GTFS-Realtime trip-update and alert feeds as OTP realtime updaters.
 5. Run OTP on the internal network and set:
 
 ```sh
@@ -41,15 +41,22 @@ Build the graph once, then serve it on port 8080. Docker-compatible Podman is
 used here because it is available on Fedora:
 
 ```sh
+cp infra/otp/router-config.json infra/otp/data/router-config.json
 podman run --rm -e JAVA_TOOL_OPTIONS='-Xmx8g' \
   -v "$(pwd)/infra/otp/data:/var/opentripplanner:Z" \
   docker.io/opentripplanner/opentripplanner:latest --build --save
 
 podman run --rm --name otp -p 8080:8080 \
   -e JAVA_TOOL_OPTIONS='-Xmx8g' \
+  -e MTA_GTFS_REALTIME_API_KEY="$MTA_GTFS_REALTIME_API_KEY" \
   -v "$(pwd)/infra/otp/data:/var/opentripplanner:Z" \
   docker.io/opentripplanner/opentripplanner:latest --load --serve
 ```
+
+`router-config.json` is loaded from the OTP data directory. The MTA realtime
+API key is optional for a static smoke test, but must be supplied for live
+subway updates if the feed requires authentication. OTP substitutes the
+environment variable in the configured request header; do not commit a key.
 
 The Next.js route calls:
 

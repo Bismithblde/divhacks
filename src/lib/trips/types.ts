@@ -1,5 +1,10 @@
 import type { LineString } from "geojson";
-import type { Coordinate, RouteFeature } from "@/lib/routing/types";
+import type {
+  Coordinate,
+  RouteFeature,
+  RouteInstruction,
+} from "@/lib/routing/types";
+import type { EventAccessOverride } from "@/lib/events/types";
 
 export type { Coordinate } from "@/lib/routing/types";
 
@@ -26,6 +31,10 @@ export type TripRequest = {
   timing: TripTiming;
   mode: TripMode;
   constraints: TripConstraints;
+  accessOverrides?: Array<{
+    closureId: string;
+    access: EventAccessOverride;
+  }>;
 };
 
 export type TripLeg = {
@@ -44,13 +53,43 @@ export type TripLeg = {
   startTime: string;
   endTime: string;
   durationSeconds: number;
+  distanceMeters?: number;
   geometry?: LineString;
+  instructions?: RouteInstruction[];
+  steps?: RouteStep[];
   routeName?: string;
   routeColor?: string;
   status: LegStatus;
   delaySeconds?: number;
   alert?: string;
   realtimeSource?: string;
+};
+
+export type RouteStepKind =
+  | "depart"
+  | "walk"
+  | "board"
+  | "ride"
+  | "transfer"
+  | "alight"
+  | "arrive";
+
+export type RouteStep = {
+  id: string;
+  kind: RouteStepKind;
+  mode: LegMode;
+  instruction: string;
+  from: TripLeg["from"];
+  to: TripLeg["to"];
+  startTime: string;
+  endTime: string;
+  durationSeconds: number;
+  distanceMeters?: number;
+  routeName?: string;
+  stopId?: string;
+  status: LegStatus;
+  delaySeconds?: number;
+  geometry?: LineString;
 };
 
 export type TripAlert = {
@@ -102,7 +141,8 @@ export type TripWarning = {
     | "provider-limited"
     | "late-arrival"
     | "no-realtime-bus"
-    | "no-realtime-subway";
+    | "no-realtime-subway"
+    | "user-access-override";
   message: string;
   source?: string;
 };
@@ -121,6 +161,32 @@ export type ScoredItinerary = VerifiedItinerary & {
   riskPenaltySeconds: number;
 };
 
+export type RouteOption = ScoredItinerary & {
+  steps: RouteStep[];
+};
+
+export type ActiveTripStatus =
+  | "ready"
+  | "walking-to-stop"
+  | "waiting"
+  | "riding"
+  | "transfer"
+  | "adjustment-needed"
+  | "arrived"
+  | "stopped";
+
+export type ActiveTrip = {
+  id: string;
+  startedAt: string;
+  destinationLabel?: string;
+  route: RouteOption;
+  currentPosition: Coordinate;
+  currentLegIndex: number;
+  status: ActiveTripStatus;
+  lastCheckedAt: string | null;
+  lastDecisionAt: string | null;
+};
+
 export type TripExplanation = {
   headline: string;
   action: "stay" | "switch" | "continue" | "recheck";
@@ -132,8 +198,8 @@ export type TripExplanation = {
 
 export type TripPlanResponse = {
   status: "ok" | "needs-input" | "no-plan" | "unavailable" | "invalid";
-  plan?: ScoredItinerary;
-  alternatives: ScoredItinerary[];
+  plan?: RouteOption;
+  alternatives: RouteOption[];
   explanation?: TripExplanation;
   warnings: TripWarning[];
   error?: string;
@@ -155,15 +221,30 @@ export type TripDecision = {
     | "current-plan-still-best"
     | "alternate-arrives-earlier"
     | "current-plan-misses-deadline"
+    | "missed-departure"
     | "service-cancelled"
+    | "service-late"
     | "data-too-stale"
     | "no-feasible-alternative";
   currentOption?: ScoredItinerary;
   recommendedOption?: ScoredItinerary;
   alternatives: ScoredItinerary[];
+  options?: TripDecisionOption[];
   explanation?: TripExplanation;
   warnings: TripWarning[];
   meta?: TripPlanResponse["meta"];
+};
+
+export type TripDecisionOption = {
+  id: string;
+  action: "wait" | "switch" | "walk" | "keep-current";
+  label: string;
+  description: string;
+  recommended?: boolean;
+  option?: RouteOption;
+  arrivalTime?: string;
+  extraSeconds?: number;
+  freshness?: FeedFreshness[];
 };
 
 export type ReplanRequest = {
@@ -171,6 +252,7 @@ export type ReplanRequest = {
   currentPosition: Coordinate;
   currentLegIndex: number;
   currentPlan: VerifiedItinerary;
+  lastDecisionAt?: string | null;
 };
 
 export type WalkingRouteResult = {
@@ -197,6 +279,7 @@ export interface WalkingRouter {
     destination: Coordinate,
     departureTime: string,
     obstacles: import("@/lib/closures/types").ClosureFeature[],
+    accessOverrides?: TripRequest["accessOverrides"],
   ): Promise<WalkingRouteResult>;
 }
 

@@ -10,6 +10,7 @@ import {
   type ExpressionSpecification,
   type GeoJSONSource,
 } from "maplibre-gl";
+import type { AllPaintProperties } from "@maplibre/maplibre-gl-style-spec";
 import {
   Plus,
   Minus,
@@ -20,7 +21,11 @@ import {
 } from "lucide-react";
 import type { ClosureFeature } from "@/lib/closures/types";
 import { geometryBounds } from "@/lib/closures/normalize";
-import type { Coordinate, RouteFeature } from "@/lib/routing/types";
+import type {
+  Coordinate,
+  RouteFeature,
+  RouteMapLine,
+} from "@/lib/routing/types";
 import { DEMO_LOCATION } from "@/lib/location";
 
 setWorkerUrl("/maplibre/maplibre-gl-worker.mjs");
@@ -33,7 +38,7 @@ const originalMapPaint = new WeakMap<
 function paintForTheme(
   map: Map,
   layer: string,
-  property: string,
+  property: keyof AllPaintProperties,
   darkValue: unknown,
   dark: boolean,
 ) {
@@ -45,7 +50,11 @@ function paintForTheme(
   }
   const key = `${layer}:${property}`;
   if (!stored.has(key)) stored.set(key, map.getPaintProperty(layer, property));
-  map.setPaintProperty(layer, property, dark ? darkValue : stored.get(key));
+  map.setPaintProperty(
+    layer,
+    property,
+    (dark ? darkValue : stored.get(key)) as AllPaintProperties[typeof property],
+  );
 }
 
 function applyMapTheme(map: Map, dark: boolean) {
@@ -196,6 +205,7 @@ type Props = {
   features: ClosureFeature[];
   selected: ClosureFeature | null;
   route: RouteFeature | null;
+  routeLines?: RouteMapLine[];
   routeLabel: {
     durationSeconds: number;
     modeLabel: string;
@@ -212,6 +222,7 @@ export function ClosureMap({
   features,
   selected,
   route,
+  routeLines = [],
   routeLabel,
   destination,
   selectingDestination,
@@ -231,6 +242,7 @@ export function ClosureMap({
   const centeredOnLocation = useRef(false);
   const props = useRef({
     features,
+    routeLines,
     onSelect,
     onDestination,
     onBounds,
@@ -239,6 +251,7 @@ export function ClosureMap({
   useEffect(() => {
     props.current = {
       features,
+      routeLines,
       onSelect,
       onDestination,
       onBounds,
@@ -246,6 +259,7 @@ export function ClosureMap({
     };
   }, [
     features,
+    routeLines,
     onSelect,
     onDestination,
     onBounds,
@@ -487,6 +501,54 @@ export function ClosureMap({
         paint: { "line-color": "#326448", "line-width": 5 },
         layout: { "line-cap": "round", "line-join": "round" },
       });
+      map.addSource("route-options", { type: "geojson", data: empty });
+      map.addLayer({
+        id: "route-options-casing",
+        type: "line",
+        source: "route-options",
+        paint: {
+          "line-color": "#ffffff",
+          "line-width": [
+            "case",
+            ["boolean", ["get", "selected"], false],
+            10,
+            6,
+          ],
+          "line-opacity": 0.95,
+        },
+        layout: { "line-cap": "round", "line-join": "round" },
+      });
+      map.addLayer({
+        id: "route-options-line",
+        type: "line",
+        source: "route-options",
+        paint: {
+          "line-color": [
+            "match",
+            ["get", "mode"],
+            "BUS",
+            "#B45309",
+            "SUBWAY",
+            "#7C3AED",
+            "DRIVE",
+            "#2563EB",
+            "#326448",
+          ],
+          "line-width": [
+            "case",
+            ["boolean", ["get", "selected"], false],
+            6,
+            3,
+          ],
+          "line-opacity": [
+            "case",
+            ["boolean", ["get", "selected"], false],
+            1,
+            0.55,
+          ],
+        },
+        layout: { "line-cap": "round", "line-join": "round" },
+      });
       map.addSource("destination", { type: "geojson", data: empty });
       map.addLayer({
         id: "destination-point",
@@ -623,6 +685,21 @@ export function ClosureMap({
       route || empty,
     );
   }, [route, ready]);
+  useEffect(() => {
+    if (!ready) return;
+    const features = routeLines.map((line) => ({
+      ...line.route,
+      properties: {
+        ...line.route.properties,
+        routeId: line.id,
+        mode: line.mode,
+        selected: Boolean(line.selected),
+      },
+    }));
+    (
+      mapRef.current?.getSource("route-options") as GeoJSONSource | undefined
+    )?.setData({ type: "FeatureCollection", features });
+  }, [ready, routeLines]);
   useEffect(() => {
     const map = mapRef.current;
     if (!ready || !map) return;

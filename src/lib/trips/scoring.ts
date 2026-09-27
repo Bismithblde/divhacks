@@ -159,7 +159,7 @@ function minutes(seconds: number) {
 
 export function deterministicExplanation(
   decision: {
-    action: "stay" | "switch" | "continue" | "recheck";
+    action: "stay" | "switch" | "continue" | "recheck" | "replan";
     currentOption?: ScoredItinerary;
     recommendedOption?: ScoredItinerary;
     warnings: TripWarning[];
@@ -200,7 +200,9 @@ export function deterministicExplanation(
       ? "switch"
       : decision.action === "stay"
         ? "stay"
-        : "continue";
+        : decision.action === "replan"
+          ? "recheck"
+          : "continue";
   const headline =
     action === "switch"
       ? `Switch to arrive around ${arrival}`

@@ -8,6 +8,13 @@ import type {
 
 const MAX_WALKING_MINUTES = 180;
 const MAX_TRANSFERS = 12;
+const MAX_ACCESS_OVERRIDES = 20;
+const ACCESS_OVERRIDES = new Set([
+  "no-closure",
+  "roads-closed",
+  "sidewalk-closed",
+  "sidewalk-crowded",
+]);
 
 function coordinate(value: unknown): value is Coordinate {
   return (
@@ -75,6 +82,29 @@ function parseConstraints(value: unknown): TripConstraints {
   return constraints;
 }
 
+function parseAccessOverrides(value: unknown) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > MAX_ACCESS_OVERRIDES) return null;
+  const parsed = value.filter(
+    (override): override is NonNullable<TripRequest["accessOverrides"]>[number] =>
+      Boolean(
+        override &&
+          typeof override === "object" &&
+          typeof override.closureId === "string" &&
+          override.closureId.length > 0 &&
+          override.closureId.length <= 120 &&
+          ACCESS_OVERRIDES.has(override.access),
+      ),
+  );
+  if (
+    parsed.length !== value.length ||
+    new Set(parsed.map((override) => override.closureId)).size !== parsed.length
+  ) {
+    return null;
+  }
+  return parsed;
+}
+
 export type TripValidationResult =
   | { ok: true; request: TripRequest; departure: number; deadline: number | null }
   | { ok: false; error: string };
@@ -116,6 +146,10 @@ export function validateTripRequest(body: unknown): TripValidationResult {
     };
   }
   const mode = value.mode;
+  const accessOverrides = parseAccessOverrides(value.accessOverrides);
+  if (!accessOverrides) {
+    return { ok: false, error: "The event access overrides are invalid." };
+  }
   const now = Date.now();
   const departure =
     timing.type === "depart-at"
@@ -138,6 +172,7 @@ export function validateTripRequest(body: unknown): TripValidationResult {
       timing,
       mode,
       constraints: parseConstraints(value.constraints),
+      accessOverrides,
     },
     departure,
     deadline,

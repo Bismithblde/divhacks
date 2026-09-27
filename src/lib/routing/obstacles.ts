@@ -1,5 +1,6 @@
 import { geometryBounds } from "@/lib/closures/normalize";
 import type { ClosureFeature, ClosureGeometry } from "@/lib/closures/types";
+import type { EventAccessOverride } from "@/lib/events/types";
 import type {
   AvoidancePolygon,
   ClassifiedObstacles,
@@ -104,12 +105,34 @@ export function classifyObstacles(
   features: ClosureFeature[],
   avoidClosureIds: string[] = [],
   mode: RouteMode = "foot-walking",
+  accessOverrides: Array<{
+    closureId: string;
+    access: EventAccessOverride;
+  }> = [],
 ): ClassifiedObstacles {
   const requested = new Set(avoidClosureIds);
+  const overrides = new Map(
+    accessOverrides.map((override) => [override.closureId, override.access]),
+  );
   const hard: ClosureFeature[] = [];
   const warnings: RouteWarning[] = [];
 
   for (const feature of features) {
+    const override = overrides.get(feature.properties.id);
+    if (override) {
+      const blocked =
+        (mode === "driving-car" && override === "roads-closed") ||
+        (mode === "foot-walking" && override === "sidewalk-closed");
+      warnings.push({
+        code: "user-access-override",
+        message: blocked
+          ? `This route treats ${feature.properties.title} as blocked based on your session-only access setting.`
+          : `This route may pass through ${feature.properties.title} based on your session-only access setting.`,
+        closureIds: [feature.properties.id],
+      });
+      if (blocked) hard.push(feature);
+      continue;
+    }
     const explicitlyAvoided = requested.has(feature.properties.id);
     const vehicleAccessClear =
       mode === "driving-car" &&

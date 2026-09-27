@@ -103,6 +103,74 @@ test("vehicle-clear sidewalk permits do not block driving routes", () => {
   );
 });
 
+test("session access overrides affect only the selected travel mode", () => {
+  const event = closure("event");
+  const roadsClosed = [
+    { closureId: "event", access: "roads-closed" as const },
+  ];
+  const driving = classifyObstacles(
+    [event],
+    [],
+    "driving-car",
+    roadsClosed,
+  );
+  const walking = classifyObstacles(
+    [event],
+    [],
+    "foot-walking",
+    roadsClosed,
+  );
+  assert.deepEqual(
+    driving.hard.map((feature) => feature.properties.id),
+    ["event"],
+  );
+  assert.deepEqual(walking.hard, []);
+  assert.equal(driving.warnings[0]?.code, "user-access-override");
+  assert.equal(walking.warnings[0]?.code, "user-access-override");
+
+  const sidewalkClosed = [
+    { closureId: "event", access: "sidewalk-closed" as const },
+  ];
+  assert.deepEqual(
+    classifyObstacles([event], [], "driving-car", sidewalkClosed).hard,
+    [],
+  );
+  assert.deepEqual(
+    classifyObstacles([event], [], "foot-walking", sidewalkClosed).hard.map(
+      (feature) => feature.properties.id,
+    ),
+    ["event"],
+  );
+});
+
+test("route validation bounds and preserves session access overrides", () => {
+  const result = validateRouteRequest({
+    origin: [-73.99, 40.73],
+    destination: [-73.97, 40.74],
+    departureTime: "2026-09-26T12:00:00-04:00",
+    mode: "foot-walking",
+    accessOverrides: [
+      { closureId: "event-1", access: "sidewalk-crowded" },
+    ],
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.deepEqual(result.request.accessOverrides, [
+      { closureId: "event-1", access: "sidewalk-crowded" },
+    ]);
+  }
+  assert.equal(
+    validateRouteRequest({
+      origin: [-73.99, 40.73],
+      destination: [-73.97, 40.74],
+      departureTime: "2026-09-26T12:00:00-04:00",
+      mode: "foot-walking",
+      accessOverrides: [{ closureId: "event-1", access: "invented" }],
+    }).ok,
+    false,
+  );
+});
+
 test("avoidance polygons and route verification catch a route through a closure", () => {
   const obstacle = closure("blocked", "blocked");
   const polygons = buildAvoidancePolygons([obstacle]);

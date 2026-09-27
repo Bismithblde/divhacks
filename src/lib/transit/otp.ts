@@ -9,6 +9,7 @@ import type {
   TripAlert,
   TripLeg,
 } from "@/lib/trips/types";
+import { routeStepsForLeg } from "@/lib/trips/steps";
 
 const OTP_QUERY = `
 query Plan($originLat: CoordinateValue!, $originLon: CoordinateValue!, $destinationLat: CoordinateValue!, $destinationLon: CoordinateValue!, $dateTime: PlanDateTimeInput!) {
@@ -168,7 +169,7 @@ function normalizeLeg(
     .find((value): value is string => Boolean(value));
   const delaySeconds =
     leg.end?.estimated?.delay ?? leg.start?.estimated?.delay;
-  return {
+  const normalized: TripLeg = {
     id: `otp-leg-${index}`,
     mode,
     from: {
@@ -184,6 +185,7 @@ function normalizeLeg(
     startTime: new Date(start).toISOString(),
     endTime: new Date(end).toISOString(),
     durationSeconds: Math.round(leg.duration || (end - start) / 1000),
+    distanceMeters: leg.distance,
     geometry: geometry(leg.legGeometry?.points),
     routeName:
       mode === "WALK"
@@ -196,6 +198,10 @@ function normalizeLeg(
     delaySeconds,
     alert,
     realtimeSource: leg.realTime ? "MTA GTFS-Realtime via OTP" : undefined,
+  };
+  return {
+    ...normalized,
+    steps: routeStepsForLeg(normalized),
   };
 }
 
@@ -338,14 +344,24 @@ export class OpenTripPlannerRouter implements TransitRouter {
             busClient.stopPredictions(leg.fromStopId!, leg.routeName),
           ),
         );
-        const live = results.find(
-          (result) => result.status === "live" && result.predictions.length,
+        const liveByLeg = new Map(
+          busLegs.map((leg, index) => {
+            const result = results[index];
+            return [
+              `${leg.fromStopId}:${leg.routeName || ""}`,
+              result?.status === "live" && result.predictions.length
+                ? result.predictions[0]
+                : null,
+            ] as const;
+          }),
         );
-        if (!live) return itinerary;
-        const next = live.predictions[0];
+        if (![...liveByLeg.values()].some(Boolean)) return itinerary;
         const updatedLegs = itinerary.legs.map((leg) => {
-          if (leg.mode !== "BUS" || leg.fromStopId !== busLegs[0].fromStopId)
-            return leg;
+          if (leg.mode !== "BUS" || !leg.fromStopId) return leg;
+          const next =
+            liveByLeg.get(`${leg.fromStopId}:${leg.routeName || ""}`) ||
+            null;
+          if (!next) return leg;
           const delaySeconds = Math.round(
             (Date.parse(next.expectedArrival) - Date.parse(leg.startTime)) /
               1000,
@@ -361,7 +377,9 @@ export class OpenTripPlannerRouter implements TransitRouter {
           ...itinerary,
           legs: updatedLegs,
           status: "realtime" as const,
-          sourceFetchedAt: live.freshness.fetchedAt,
+          sourceFetchedAt:
+            results.find((result) => result.status === "live")?.freshness
+              .fetchedAt || itinerary.sourceFetchedAt,
         };
       }),
     );

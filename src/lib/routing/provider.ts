@@ -4,6 +4,7 @@ import type {
   RouteMode,
   RouteRequest,
   RouteFeature,
+  RouteInstruction,
 } from "./types";
 import {
   buildAvoidancePolygons,
@@ -16,9 +17,9 @@ import type { ClosureFeature } from "@/lib/closures/types";
 
 const OPENROUTESERVICE_URL: Record<RouteMode, string> = {
   "foot-walking":
-    "https://api.openrouteservice.org/v2/directions/foot-walking/geojson",
+    "https://api.heigit.org/openrouteservice/v2/directions/foot-walking/geojson",
   "driving-car":
-    "https://api.openrouteservice.org/v2/directions/driving-car/geojson",
+    "https://api.heigit.org/openrouteservice/v2/directions/driving-car/geojson",
 };
 const REQUEST_TIMEOUT_MS = 20_000;
 const CROSSING_METERS = 12;
@@ -51,9 +52,49 @@ type ProviderFeatureCollection = FeatureCollection & {
     geometry?: { type?: string; coordinates?: unknown };
     properties?: {
       summary?: { duration?: number; distance?: number };
+      segments?: Array<{
+        steps?: Array<{
+          instruction?: string;
+          distance?: number;
+          duration?: number;
+          way_points?: [number, number];
+        }>;
+      }>;
     };
   }>;
 };
+
+type ProviderProperties = {
+  summary?: { duration?: number; distance?: number };
+  segments?: Array<{
+    steps?: Array<{
+      instruction?: string;
+      distance?: number;
+      duration?: number;
+      way_points?: [number, number];
+    }>;
+  }>;
+};
+
+function parseInstructions(
+  properties: ProviderProperties | null | undefined,
+): RouteInstruction[] {
+  return (properties?.segments || []).flatMap((segment) =>
+    (segment.steps || [])
+      .filter(
+        (step) =>
+          typeof step.instruction === "string" &&
+          typeof step.distance === "number" &&
+          typeof step.duration === "number",
+      )
+      .map((step) => ({
+        instruction: step.instruction!,
+        distanceMeters: step.distance!,
+        durationSeconds: step.duration!,
+        wayPoints: step.way_points,
+      })),
+  );
+}
 
 function parseRoutes(body: ProviderFeatureCollection): RouteFeature[] {
   return (body.features || [])
@@ -79,6 +120,9 @@ function parseRoutes(body: ProviderFeatureCollection): RouteFeature[] {
           provider: "openrouteservice",
           durationSeconds: feature.properties!.summary!.duration!,
           distanceMeters: feature.properties!.summary!.distance!,
+          instructions: parseInstructions(
+            feature.properties as ProviderProperties | null | undefined,
+          ),
         },
       };
     })
@@ -103,7 +147,7 @@ async function requestRoutes(
   const polygon = buildAvoidancePolygons(obstacles, bufferMeters);
   const payload: Record<string, unknown> = {
     coordinates: [request.origin, request.destination],
-    instructions: false,
+    instructions: true,
   };
   if (request.mode === "foot-walking") {
     payload.alternative_routes = {

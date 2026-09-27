@@ -1,5 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
+test.describe.skip("superseded planning-first journeys", () => {
+
 const destination = {
   id: "way-times-square",
   label: "Times Square, New York, NY",
@@ -280,4 +282,5 @@ test("keeps the detailed disruption map available as a secondary workflow", asyn
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
   ).toBe(true);
+});
 });

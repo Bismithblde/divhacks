@@ -41,10 +41,13 @@ handlers. Add the key to `.env.local`:
 
 ```sh
 OPENROUTESERVICE_API_KEY=your-server-side-key
+GEMINI_API_KEY=your-server-side-key
+GEMINI_MODEL=gemini-2.5-flash
 ```
 
-Never use a `NEXT_PUBLIC_` variable for this key. Without it, the UI reports
-that routing and search are unavailable rather than failing silently.
+Never use a `NEXT_PUBLIC_` variable for these keys. Gemini is called only when
+an event is opened; validated event briefs are cached and fall back to source
+facts when Gemini is unavailable.
 
 ## Structure
 

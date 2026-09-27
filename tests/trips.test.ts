@@ -6,6 +6,10 @@ import { deterministicExplanation, chooseDecision, scoreItinerary } from "../src
 import { validateTripRequest } from "../src/lib/trips/validation";
 import { explainPlan } from "../src/lib/trips/explanation";
 import { MtaBusTimeClient, OpenTripPlannerRouter } from "../src/lib/transit/otp";
+import {
+  missedTransitDeparture,
+  statusForTrip,
+} from "../src/lib/trips/active";
 
 const origin: [number, number] = [-73.985, 40.735];
 const destination: [number, number] = [-73.97, 40.75];
@@ -234,6 +238,75 @@ test("replanning respects a cooldown to prevent route oscillation", () => {
   );
   assert.equal(decision.action, "stay");
   assert.equal(decision.reasonCode, "current-plan-still-best");
+});
+
+test("active monitoring detects a missed transit departure after its grace window", () => {
+  const start = "2026-09-26T12:00:00.000Z";
+  const end = "2026-09-26T12:30:00.000Z";
+  const service = leg("BUS", start, end, "M15");
+  assert.equal(
+    missedTransitDeparture(service, Date.parse("2026-09-26T12:02:00.000Z")),
+    true,
+  );
+  assert.equal(
+    missedTransitDeparture(service, Date.parse("2026-09-26T12:01:00.000Z")),
+    false,
+  );
+});
+
+test("active monitoring reports arrival after the final leg ends", () => {
+  const current = itinerary("current", "2026-09-26T12:25:00.000Z");
+  const route = {
+    ...scoreItinerary(
+      {
+        ...current,
+        verified: true,
+        blockedLegIds: [],
+        avoidedClosureIds: [],
+        warnings: [],
+      },
+      null,
+    ),
+    steps: [],
+  };
+  assert.equal(
+    statusForTrip(route, 0, Date.parse("2026-09-26T12:31:00.000Z")),
+    "arrived",
+  );
+});
+
+test("replanning surfaces cancellation and a walk alternative explicitly", async () => {
+  const current = {
+    ...itinerary("current", "2026-09-26T13:12:00.000Z"),
+    alerts: [
+      {
+        id: "cancelled",
+        severity: "critical" as const,
+        message: "The L train is cancelled.",
+        source: "MTA",
+        updatedAt: new Date().toISOString(),
+      },
+    ],
+    verified: true,
+    blockedLegIds: [],
+    avoidedClosureIds: [],
+    warnings: [],
+  };
+  const result = await replanTrip(
+    {
+      origin,
+      destination,
+      timing: { type: "depart-at", time: new Date().toISOString() },
+      mode: "transit-walk",
+      constraints: {},
+    },
+    current,
+    origin,
+    dependencies([itinerary("alternate", "2026-09-26T12:54:00.000Z", "M15")]),
+  );
+  assert.equal(result.reasonCode, "service-cancelled");
+  assert.equal(result.action, "switch");
+  assert.equal(result.options?.some((option) => option.action === "walk"), true);
 });
 
 test("LangGraph returns a grounded plan and deterministic explanation without an LLM key", async () => {

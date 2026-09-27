@@ -138,6 +138,7 @@ export async function POST(request: Request) {
     relevant,
     validation.request.avoidClosureIds,
     validation.request.mode,
+    validation.request.accessOverrides,
   );
   const dataComplete = snapshots.every(
     (snapshot) =>

@@ -11,14 +11,25 @@ import type { TripPlannerDependencies, WalkingRouter } from "./types";
 
 function createRoutingRouter(mode: RouteMode): WalkingRouter {
   return {
-    async route(origin, destination, departureTime, obstacles) {
+    async route(
+      origin,
+      destination,
+      departureTime,
+      obstacles,
+      accessOverrides,
+    ) {
       const request: RouteRequest = {
         origin,
         destination,
         departureTime,
         mode,
       };
-      const classified = classifyObstacles(obstacles, [], mode);
+      const classified = classifyObstacles(
+        obstacles,
+        [],
+        mode,
+        accessOverrides,
+      );
       try {
         const result = await findRoute(request, classified.hard);
         return {

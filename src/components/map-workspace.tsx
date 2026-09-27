@@ -10,11 +10,13 @@ import {
   useDeferredValue,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
   ArrowLeft,
   ArrowUpRight,
+  BusFront,
   Car,
   CalendarDays,
   Check,
@@ -48,9 +50,10 @@ import {
 } from "@/lib/closures/time";
 import type {
   Coordinate,
-  RouteMode,
   RouteResponse,
   RouteFeature,
+  RouteMapLine,
+  TravelMode,
 } from "@/lib/routing/types";
 import { DEMO_LOCATION } from "@/lib/location";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -58,6 +61,28 @@ import type {
   GeocodeResponse,
   GeocodeResult,
 } from "@/lib/geocoding/types";
+import type {
+  ActiveTrip,
+  RouteOption,
+  TripDecision,
+  TripPlanResponse,
+} from "@/lib/trips/types";
+import { routeStepsForLeg } from "@/lib/trips/steps";
+import { RouteOptionsDrawer } from "./route-options-drawer";
+import {
+  ActiveTripBanner,
+  TripAdjustmentPrompt,
+} from "./active-trip-panel";
+import {
+  currentLegIndex,
+  statusForTrip,
+} from "@/lib/trips/active";
+import {
+  sourceEventTags,
+  type EventAccessOverride,
+  type EventSummary,
+} from "@/lib/events/types";
+import { EventStory } from "./event-story";
 
 const ClosureMap = dynamic(
   () => import("./closure-map").then((m) => m.ClosureMap),
@@ -68,6 +93,7 @@ const ClosureMap = dynamic(
 );
 const EMPTY: ClosureFeature[] = [];
 const PRELOAD_DAYS = 7;
+const ACTIVE_TRIP_STORAGE_KEY = "blockednyc.active-trip.v1";
 const count = new Intl.NumberFormat("en-US");
 const date = (n: number, includeTime = false) =>
   new Intl.DateTimeFormat("en-US", {
@@ -78,6 +104,136 @@ const date = (n: number, includeTime = false) =>
   }).format(n);
 const updated = (value: string | null) =>
   value ? date(new Date(value).getTime(), true) : "Unavailable";
+
+function tripRouteFeature(option: RouteOption): RouteFeature | null {
+  const legs = option.legs.filter((leg) => leg.geometry);
+  if (!legs.length) return null;
+  const coordinates = legs.flatMap((leg, index) => {
+    const points = leg.geometry!.coordinates;
+    return index === 0 ? points : points.slice(1);
+  });
+  return {
+    type: "Feature",
+    geometry: { type: "LineString", coordinates },
+    properties: {
+      provider: option.provider,
+      durationSeconds: option.durationSeconds,
+      distanceMeters: legs.reduce(
+        (total, leg) => total + (leg.distanceMeters || 0),
+        0,
+      ),
+    },
+  };
+}
+
+function tripRouteLines(
+  options: RouteOption[],
+  selectedId: string | null,
+): RouteMapLine[] {
+  return options.flatMap((option) =>
+    option.legs.flatMap((leg) =>
+      leg.geometry
+        ? [
+            {
+              id: `${option.id}-${leg.id}`,
+              route: {
+                type: "Feature" as const,
+                geometry: leg.geometry,
+                properties: {
+                  provider: option.provider,
+                  durationSeconds: leg.durationSeconds,
+                  distanceMeters: leg.distanceMeters || 0,
+                },
+              },
+              mode: leg.mode,
+              selected: option.id === selectedId,
+            },
+          ]
+        : [],
+    ),
+  );
+}
+
+function buildDirectRouteOption(
+  response: RouteResponse,
+  origin: Coordinate,
+  destination: Coordinate,
+  departureTime: string,
+  mode: TravelMode,
+  routeOverride?: RouteFeature,
+  optionId = `direct-${mode}`,
+): RouteOption | null {
+  if (
+    response.status !== "ok" ||
+    !(routeOverride || response.route) ||
+    response.durationSeconds === undefined ||
+    mode === "transit-walk"
+  ) {
+    return null;
+  }
+  const durationSeconds =
+    routeOverride?.properties.durationSeconds ?? response.durationSeconds;
+  const distanceMeters =
+    routeOverride?.properties.distanceMeters ?? response.distanceMeters;
+  const legMode = mode === "driving-car" ? "DRIVE" : "WALK";
+  const leg = {
+    id: `direct-${legMode.toLowerCase()}`,
+    mode: legMode as "DRIVE" | "WALK",
+    from: { name: "Current location", coordinate: origin },
+    to: { name: "Destination", coordinate: destination },
+    startTime: departureTime,
+    endTime: new Date(
+      Date.parse(departureTime) + durationSeconds * 1000,
+    ).toISOString(),
+    durationSeconds,
+    distanceMeters,
+    geometry: (routeOverride || response.route)!.geometry,
+    instructions: (routeOverride || response.route)!.properties.instructions,
+    status:
+      response.routeStatus === "fallback" || routeOverride
+        ? ("stale" as const)
+        : ("scheduled" as const),
+  };
+  return {
+    id: optionId,
+    legs: [{ ...leg, steps: routeStepsForLeg(leg) }],
+    departureTime: leg.startTime,
+    arrivalTime: leg.endTime,
+    durationSeconds: leg.durationSeconds,
+    transfers: 0,
+    walkingSeconds: leg.mode === "WALK" ? leg.durationSeconds : 0,
+    waitingSeconds: 0,
+    status: leg.status,
+    alerts: [],
+    provider: response.meta.provider,
+    sourceFetchedAt: response.meta.requestedAt,
+    verified: true,
+    blockedLegIds: [],
+    avoidedClosureIds: response.avoidedClosures.map((closure) => closure.id),
+    warnings: [
+      ...response.warnings.map((warning) => ({
+        code: "walking-access-uncertain" as const,
+        message: warning.message,
+        source: "OpenRouteService",
+      })),
+      ...(routeOverride
+        ? [
+            {
+              code: "walking-access-uncertain" as const,
+              message:
+                "This faster route crosses a mapped disruption and may not be clear.",
+              source: "NYC closure feeds",
+            },
+          ]
+        : []),
+    ],
+    arrivalBufferSeconds: null,
+    score: durationSeconds,
+    switchingCostSeconds: 0,
+    riskPenaltySeconds: response.warnings.length * 90,
+    steps: routeStepsForLeg(leg),
+  };
+}
 
 export function MapWorkspace() {
   const [data, setData] = useState<ClosureResponse | null>(null);
@@ -109,17 +265,40 @@ export function MapWorkspace() {
   const [destinationSearchError, setDestinationSearchError] = useState("");
   const [destinationActiveIndex, setDestinationActiveIndex] = useState(-1);
   const [avoidClosureIds, setAvoidClosureIds] = useState<string[]>([]);
+  const [eventSummaries, setEventSummaries] = useState<
+    Record<string, EventSummary>
+  >({});
+  const [eventAccessOverrides, setEventAccessOverrides] = useState<
+    Record<string, EventAccessOverride>
+  >({});
   const [route, setRoute] = useState<RouteFeature | null>(null);
+  const [tripResponse, setTripResponse] = useState<TripPlanResponse | null>(
+    null,
+  );
+  const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
+  const [directRouteOptions, setDirectRouteOptions] = useState<RouteOption[]>(
+    [],
+  );
+  const [activeTrip, setActiveTrip] = useState<ActiveTrip | null>(null);
+  const [tripDecision, setTripDecision] = useState<TripDecision | null>(null);
+  const activeTripRef = useRef<ActiveTrip | null>(null);
+  const tripDecisionRef = useRef<TripDecision | null>(null);
+  const [sessionReady, setSessionReady] = useState(false);
   const [routeResponse, setRouteResponse] = useState<RouteResponse | null>(
     null,
   );
   const [usingAlternative, setUsingAlternative] = useState(false);
-  const [routeMode, setRouteMode] = useState<RouteMode>("foot-walking");
+  const [routeMode, setRouteMode] = useState<TravelMode>("transit-walk");
   const [routeModeMenuOpen, setRouteModeMenuOpen] = useState(false);
   const [routeLoading, setRouteLoading] = useState(false);
   const [routeError, setRouteError] = useState("");
   const [departureTime, setDepartureTime] = useState("");
-  const routeModeLabel = routeMode === "driving-car" ? "driving" : "walking";
+  const routeModeLabel =
+    routeMode === "driving-car"
+      ? "driving"
+      : routeMode === "transit-walk"
+        ? "transit"
+        : "walking";
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -129,6 +308,152 @@ export function MapWorkspace() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    activeTripRef.current = activeTrip;
+  }, [activeTrip]);
+
+  useEffect(() => {
+    tripDecisionRef.current = tripDecision;
+  }, [tripDecision]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      try {
+        const raw = window.sessionStorage.getItem(ACTIVE_TRIP_STORAGE_KEY);
+        if (raw) {
+          const saved = JSON.parse(raw) as {
+            activeTrip?: ActiveTrip;
+            destination?: Coordinate | null;
+            destinationLabel?: string;
+            routeMode?: TravelMode;
+          };
+          if (saved.activeTrip?.route?.legs?.length) {
+            setActiveTrip(saved.activeTrip);
+            setDestination(saved.destination || null);
+            setDestinationLabel(saved.destinationLabel || "");
+            setRouteMode(saved.routeMode || "transit-walk");
+            setSelectedTripId(saved.activeTrip.route.id);
+            setRoute(tripRouteFeature(saved.activeTrip.route));
+          }
+        }
+      } catch {
+        window.sessionStorage.removeItem(ACTIVE_TRIP_STORAGE_KEY);
+      } finally {
+        setSessionReady(true);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!sessionReady) return;
+    if (!activeTrip) {
+      window.sessionStorage.removeItem(ACTIVE_TRIP_STORAGE_KEY);
+      return;
+    }
+    window.sessionStorage.setItem(
+      ACTIVE_TRIP_STORAGE_KEY,
+      JSON.stringify({
+        activeTrip,
+        destination,
+        destinationLabel,
+        routeMode,
+      }),
+    );
+  }, [
+    activeTrip,
+    destination,
+    destinationLabel,
+    routeMode,
+    sessionReady,
+  ]);
+
+  useEffect(() => {
+    if (!activeTripRef.current || !destination) return;
+    let cancelled = false;
+    const check = async () => {
+      const current = activeTripRef.current;
+      if (!current || tripDecisionRef.current || cancelled) return;
+      const now = Date.now();
+      const legIndex = currentLegIndex(current.route, now);
+      if (!current.route.legs[legIndex]) return;
+      let currentPosition = current.currentPosition;
+      try {
+        const position = await new Promise<GeolocationPosition>(
+          (resolve, reject) =>
+            navigator.geolocation.getCurrentPosition(resolve, reject, {
+              enableHighAccuracy: true,
+              timeout: 3_000,
+              maximumAge: 30_000,
+            }),
+        );
+        currentPosition = [position.coords.longitude, position.coords.latitude];
+      } catch {
+        // Keep the last known location when permission or GPS is unavailable.
+      }
+      if (cancelled) return;
+      setActiveTrip((value) =>
+        value
+          ? {
+              ...value,
+              currentPosition,
+              currentLegIndex: legIndex,
+              status: statusForTrip(current.route, legIndex, now),
+              lastCheckedAt: new Date().toISOString(),
+            }
+          : value,
+      );
+      const mode = current.route.legs.some(
+        (item) => item.mode === "BUS" || item.mode === "SUBWAY",
+      )
+        ? "transit-walk"
+        : current.route.legs.some((item) => item.mode === "DRIVE")
+          ? "driving-car"
+          : "foot-walking";
+      try {
+        const response = await fetch("/api/trips/replan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            request: {
+              origin: currentPosition,
+              destination,
+              destinationLabel: current.destinationLabel,
+              timing: {
+                type: "depart-at",
+                time: new Date(now).toISOString(),
+              },
+              mode,
+              constraints: { maxTransfers: 3 },
+            },
+            currentPosition,
+            currentLegIndex: legIndex,
+            lastDecisionAt: current.lastDecisionAt,
+            currentPlan: current.route,
+          }),
+        });
+        const body = (await response.json()) as TripDecision;
+        const actionable =
+          response.ok &&
+          (body.action === "switch" ||
+            body.reasonCode === "missed-departure" ||
+            body.options?.some(
+              (option) => option.recommended && option.action !== "keep-current",
+            ));
+        if (actionable && !cancelled) setTripDecision(body);
+      } catch {
+        // A failed checkpoint should not interrupt an already-started trip.
+      }
+    };
+    const initial = window.setTimeout(() => void check(), 10_000);
+    const interval = window.setInterval(() => void check(), 30_000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(initial);
+      window.clearInterval(interval);
+    };
+  }, [activeTrip?.id, destination]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -229,6 +554,32 @@ export function MapWorkspace() {
     setSourcesOpen(false);
     setExpanded(true);
   }, []);
+  const cacheEventSummary = useCallback(
+    (id: string, summary: EventSummary) => {
+      setEventSummaries((current) =>
+        current[id] ? current : { ...current, [id]: summary },
+      );
+    },
+    [],
+  );
+  const changeEventAccess = useCallback(
+    (id: string, override: EventAccessOverride | null) => {
+      setEventAccessOverrides((current) => {
+        const next = { ...current };
+        if (override) next[id] = override;
+        else delete next[id];
+        return next;
+      });
+      setRoute(null);
+      setRouteResponse(null);
+      setTripResponse(null);
+      setSelectedTripId(null);
+      setDirectRouteOptions([]);
+      setUsingAlternative(false);
+      setRouteError("");
+    },
+    [],
+  );
   const onBounds = useCallback((b: number[]) => setBounds(b), []);
   const eventCount = features.filter(
     (f) => f.properties.kind === "event",
@@ -249,14 +600,20 @@ export function MapWorkspace() {
     setLimit(40);
     setDepartureTime(newYorkDateTimeInput(value, timelineAnchor ?? 0));
     setRoute(null);
+    setTripResponse(null);
+    setSelectedTripId(null);
+    setDirectRouteOptions([]);
     setRouteResponse(null);
     setUsingAlternative(false);
     setRouteError("");
   };
-  const changeRouteMode = (mode: RouteMode) => {
+  const changeRouteMode = (mode: TravelMode) => {
     setRouteMode(mode);
     setRouteModeMenuOpen(false);
     setRoute(null);
+    setTripResponse(null);
+    setSelectedTripId(null);
+    setDirectRouteOptions([]);
     setRouteResponse(null);
     setUsingAlternative(false);
     setRouteError("");
@@ -268,6 +625,9 @@ export function MapWorkspace() {
     setDestinationResults([]);
     setDestinationSearchError("");
     setRoute(null);
+    setTripResponse(null);
+    setSelectedTripId(null);
+    setDirectRouteOptions([]);
     setRouteResponse(null);
     setUsingAlternative(false);
     setRouteError("");
@@ -339,6 +699,9 @@ export function MapWorkspace() {
     setDestinationSearchError("");
     setDestinationActiveIndex(-1);
     setRoute(null);
+    setTripResponse(null);
+    setSelectedTripId(null);
+    setDirectRouteOptions([]);
     setRouteResponse(null);
     setUsingAlternative(false);
     setRouteError("");
@@ -352,6 +715,9 @@ export function MapWorkspace() {
     setDestinationSearchError("");
     setDestinationActiveIndex(-1);
     setRoute(null);
+    setTripResponse(null);
+    setSelectedTripId(null);
+    setDirectRouteOptions([]);
     setRouteResponse(null);
     setUsingAlternative(false);
     setRouteError("");
@@ -395,7 +761,54 @@ export function MapWorkspace() {
       chooseDestinationResult(destinationResults[0]);
     }
   };
+  const startTrip = async (option: RouteOption) => {
+    let currentPosition: Coordinate = [
+      DEMO_LOCATION.longitude,
+      DEMO_LOCATION.latitude,
+    ];
+    try {
+      const position = await new Promise<GeolocationPosition>(
+        (resolve, reject) =>
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            enableHighAccuracy: true,
+            timeout: 3_000,
+            maximumAge: 10_000,
+          }),
+      );
+      currentPosition = [position.coords.longitude, position.coords.latitude];
+    } catch {
+      // The demo origin keeps the flow usable when location permission is denied.
+    }
+    const now = Date.now();
+    const currentLegIndex = Math.max(
+      0,
+      option.legs.findIndex((leg) => Date.parse(leg.endTime) > now),
+    );
+    setActiveTrip({
+      id:
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `trip-${now}`,
+      startedAt: new Date(now).toISOString(),
+      destinationLabel,
+      route: option,
+      currentPosition,
+      currentLegIndex,
+      status:
+        statusForTrip(option, currentLegIndex, now),
+      lastCheckedAt: null,
+      lastDecisionAt: null,
+    });
+    setTripDecision(null);
+    setRoute(tripRouteFeature(option));
+    setSelectedTripId(option.id);
+    setExpanded(false);
+  };
   const requestRoute = async () => {
+    if (routeMode === "transit-walk") {
+      setSidebarOpen(true);
+      setExpanded(true);
+    }
     let target = destination;
     if (!target) {
       const query = destinationSearch.trim();
@@ -446,6 +859,9 @@ export function MapWorkspace() {
     }
     setRouteLoading(true);
     setRoute(null);
+    setTripResponse(null);
+    setSelectedTripId(null);
+    setDirectRouteOptions([]);
     setRouteResponse(null);
     setUsingAlternative(false);
     setRouteError("");
@@ -464,6 +880,34 @@ export function MapWorkspace() {
       } catch {
         origin = [DEMO_LOCATION.longitude, DEMO_LOCATION.latitude];
       }
+      if (routeMode === "transit-walk") {
+        const response = await fetch("/api/trips/plan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            origin,
+            destination: target,
+            destinationLabel,
+            timing: { type: "depart-at", time: departure },
+            mode: "transit-walk",
+            constraints: { maxTransfers: 3 },
+            accessOverrides: Object.entries(eventAccessOverrides).map(
+              ([closureId, access]) => ({ closureId, access }),
+            ),
+          }),
+        });
+        const body = (await response.json()) as TripPlanResponse;
+        setTripResponse(body);
+        if (!response.ok || body.status !== "ok" || !body.plan) {
+          setRouteError(
+            body.error || "A verified transit route is not available right now.",
+          );
+        } else {
+          setSelectedTripId(body.plan.id);
+          setRoute(tripRouteFeature(body.plan));
+        }
+        return;
+      }
       const response = await fetch("/api/routes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -473,6 +917,9 @@ export function MapWorkspace() {
           departureTime: departure,
           mode: routeMode,
           avoidClosureIds,
+          accessOverrides: Object.entries(eventAccessOverrides).map(
+            ([closureId, access]) => ({ closureId, access }),
+          ),
         }),
       });
       const body = (await response.json()) as RouteResponse;
@@ -484,7 +931,31 @@ export function MapWorkspace() {
         );
       } else {
         setRoute(body.route);
-      setUsingAlternative(false);
+        const option = buildDirectRouteOption(
+          body,
+          origin,
+          target,
+          departure,
+          routeMode,
+        );
+        const alternative = body.alternative
+          ? buildDirectRouteOption(
+              body,
+              origin,
+              target,
+              departure,
+              routeMode,
+              body.alternative.route,
+              `direct-${routeMode}-alternative`,
+            )
+          : null;
+        setDirectRouteOptions(
+          [option, alternative].filter(
+            (value): value is RouteOption => Boolean(value),
+          ),
+        );
+        setSelectedTripId(option?.id || null);
+        setUsingAlternative(false);
       }
     } catch {
       setRouteError(
@@ -512,6 +983,39 @@ export function MapWorkspace() {
         : null,
     [displayedDurationSeconds, routeModeLabel, routeResponse?.status],
   );
+  const tripOptions = useMemo(
+    () =>
+      tripResponse?.status === "ok" && tripResponse.plan
+        ? [tripResponse.plan, ...tripResponse.alternatives]
+        : [],
+    [tripResponse],
+  );
+  const displayOptions = useMemo(
+    () =>
+      routeMode === "transit-walk"
+        ? tripOptions
+        : directRouteOptions
+          ? directRouteOptions
+          : [],
+    [directRouteOptions, routeMode, tripOptions],
+  );
+  const mapRouteLines = useMemo(
+    () => tripRouteLines(displayOptions, selectedTripId),
+    [displayOptions, selectedTripId],
+  );
+  const displayedRouteLines = activeTrip
+    ? tripRouteLines([activeTrip.route], activeTrip.route.id)
+    : mapRouteLines;
+  const selectedTrip = displayOptions.find(
+    (option) => option.id === selectedTripId,
+  );
+  const activeRouteLabel =
+    selectedTrip
+      ? {
+          durationSeconds: selectedTrip.durationSeconds,
+          modeLabel: "transit",
+        }
+      : routeLabel;
 
   return (
     <div className="app-shell">
@@ -555,7 +1059,8 @@ export function MapWorkspace() {
             features={filtered}
             selected={selected}
             route={route}
-            routeLabel={routeLabel}
+            routeLines={displayedRouteLines}
+            routeLabel={activeRouteLabel}
             destination={destination}
             selectingDestination={selectingDestination}
             onSelect={onSelect}
@@ -563,6 +1068,54 @@ export function MapWorkspace() {
             onBounds={onBounds}
             fitRequest={fitRequest}
           />
+          {activeTrip && (
+            <ActiveTripBanner
+              trip={activeTrip}
+              onStop={() => {
+                setActiveTrip(null);
+                setTripDecision(null);
+              }}
+            />
+          )}
+          {tripDecision && (
+            <TripAdjustmentPrompt
+              decision={tripDecision}
+              onDismiss={() => {
+                setActiveTrip((current) =>
+                  current
+                    ? { ...current, lastDecisionAt: new Date().toISOString() }
+                    : current,
+                );
+                setTripDecision(null);
+              }}
+              onChoose={(option) => {
+                if (option.option) {
+                  const nextIndex = currentLegIndex(
+                    option.option,
+                    Date.now(),
+                  );
+                  setActiveTrip((current) =>
+                    current
+                      ? {
+                          ...current,
+                          route: option.option!,
+                          currentLegIndex: nextIndex,
+                          status: statusForTrip(
+                            option.option!,
+                            nextIndex,
+                            Date.now(),
+                          ),
+                          lastDecisionAt: new Date().toISOString(),
+                        }
+                      : current,
+                  );
+                  setRoute(tripRouteFeature(option.option));
+                  setSelectedTripId(option.option.id);
+                }
+                setTripDecision(null);
+              }}
+            />
+          )}
           <div
             className={`route-planner map-route-planner ${
               sidebarOpen ? "sidebar-open" : "sidebar-collapsed"
@@ -582,9 +1135,11 @@ export function MapWorkspace() {
               modeMenuOpen={routeModeMenuOpen}
               onToggleMode={() => {
                 changeRouteMode(
-                  routeMode === "foot-walking"
-                    ? "driving-car"
-                    : "foot-walking",
+                  routeMode === "transit-walk"
+                    ? "foot-walking"
+                    : routeMode === "foot-walking"
+                      ? "driving-car"
+                      : "transit-walk",
                 );
                 setRouteModeMenuOpen(true);
               }}
@@ -648,7 +1203,9 @@ export function MapWorkspace() {
         <aside
           id="closure-panel"
           tabIndex={-1}
-          className={`closure-panel ${expanded ? "expanded" : ""} ${
+          className={`closure-panel ${
+            expanded ? "expanded" : ""
+          } ${displayOptions.length > 0 && !activeTrip ? "has-route-options" : ""} ${
             sidebarOpen ? "" : "sidebar-collapsed"
           }`}
           aria-label="Closures and events"
@@ -750,16 +1307,42 @@ export function MapWorkspace() {
               </div>
             </>
           ) : selected ? (
-            <ClosureDetails
-              feature={selected}
-              onBack={() => setSelectedId(null)}
-              onSources={() => setSourcesOpen(true)}
-            />
+            selected.properties.kind === "event" ? (
+              <EventStory
+                feature={selected}
+                summary={eventSummaries[selected.properties.id]}
+                override={eventAccessOverrides[selected.properties.id]}
+                onBack={() => setSelectedId(null)}
+                onSources={() => setSourcesOpen(true)}
+                onSummary={cacheEventSummary}
+                onOverride={changeEventAccess}
+              />
+            ) : (
+              <ClosureDetails
+                feature={selected}
+                onBack={() => setSelectedId(null)}
+                onSources={() => setSourcesOpen(true)}
+              />
+            )
           ) : (
             <>
               <h1 className="sr-only">Current disruptions</h1>
               {destination && (
-                <div className="route-planner route-details">
+                <>
+                  {displayOptions.length > 0 && !activeTrip && (
+                    <RouteOptionsDrawer
+                      options={displayOptions}
+                      selectedId={selectedTripId}
+                      destinationLabel={destinationLabel}
+                      onSelect={(option) => {
+                        setSelectedTripId(option.id);
+                        setRoute(tripRouteFeature(option));
+                        setRouteError("");
+                      }}
+                      onStart={startTrip}
+                    />
+                  )}
+                  <div className="route-planner route-details">
                     <p className="route-destination">
                       To{" "}
                       {destinationLabel || "Selected destination"}
@@ -784,6 +1367,7 @@ export function MapWorkspace() {
                     )}
                     {routeResponse?.status === "ok" &&
                       routeResponse.alternative &&
+                      displayOptions.length <= 1 &&
                       !usingAlternative && (
                         <div className="route-alternative">
                           <p>
@@ -816,6 +1400,7 @@ export function MapWorkspace() {
                       )}
                     {routeResponse?.status === "ok" &&
                       routeResponse.alternative &&
+                      displayOptions.length <= 1 &&
                       usingAlternative && (
                         <button
                           className="text-button route-clear-alternative"
@@ -839,7 +1424,8 @@ export function MapWorkspace() {
                         {routeResponse.avoidedClosures.length === 1 ? "" : "s"}.
                       </p>
                     ) : null}
-                </div>
+                  </div>
+                </>
               )}
               <div className="filters">
                 <label className="search-label" htmlFor="closure-search">
@@ -992,9 +1578,23 @@ export function MapWorkspace() {
                               <span> · {f.properties.borough}</span>
                             </span>
                             <strong>{f.properties.title}</strong>
-                            <span className="closure-location">
-                              {f.properties.location}
-                            </span>
+                            {f.properties.kind === "event" ? (
+                              <span
+                                className="event-tag-list event-row-tags"
+                                aria-label="Event tags"
+                              >
+                                {(
+                                  eventSummaries[f.properties.id]?.tags ||
+                                  sourceEventTags(f)
+                                ).map((tag) => (
+                                  <span key={tag}>{tag}</span>
+                                ))}
+                              </span>
+                            ) : (
+                              <span className="closure-location">
+                                {f.properties.location}
+                              </span>
+                            )}
                             <span className="closure-date">
                               <Clock3 size={12} />
                               {f.properties.start > (data?.meta.start || 0)
@@ -1113,14 +1713,19 @@ function DestinationSearch({
   onKeyDown: (event: KeyboardEvent<HTMLInputElement>) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onChoose: (result: GeocodeResult) => void;
-  routeMode: RouteMode;
+  routeMode: TravelMode;
   modeMenuOpen: boolean;
   onToggleMode: () => void;
-  onModeChange: (mode: RouteMode) => void;
+  onModeChange: (mode: TravelMode) => void;
   canSubmit: boolean;
   routeLoading: boolean;
 }) {
-  const routeModeVerb = routeMode === "driving-car" ? "drive" : "walk";
+  const routeModeVerb =
+    routeMode === "driving-car"
+      ? "drive"
+      : routeMode === "transit-walk"
+        ? "take transit"
+        : "walk";
   return (
     <>
       <form className="destination-search" onSubmit={onSubmit}>
@@ -1163,21 +1768,39 @@ function DestinationSearch({
           >
             {routeMode === "driving-car" ? (
               <Car size={17} aria-hidden="true" />
+            ) : routeMode === "transit-walk" ? (
+              <BusFront size={17} aria-hidden="true" />
             ) : (
               <Footprints size={17} aria-hidden="true" />
             )}
-            <span>{routeMode === "driving-car" ? "Drive" : "Walk"}</span>
+            <span>
+              {routeMode === "driving-car"
+                ? "Drive"
+                : routeMode === "transit-walk"
+                  ? "Transit"
+                  : "Walk"}
+            </span>
           </button>
           <button
             className="destination-search-submit"
             type="submit"
             disabled={!canSubmit || routeLoading}
           >
-            {routeLoading ? "Finding…" : `Find clearest ${routeModeVerb}`}
+            {routeLoading ? "Finding…" : `Find ${routeModeVerb}`}
           </button>
         </div>
         {modeMenuOpen && (
           <div className="route-mode-menu" role="menu" aria-label="Travel mode">
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={routeMode === "transit-walk"}
+              className={routeMode === "transit-walk" ? "selected" : ""}
+              onClick={() => onModeChange("transit-walk")}
+            >
+              <BusFront size={16} aria-hidden="true" />
+              Transit
+            </button>
             <button
               type="button"
               role="menuitemradio"
