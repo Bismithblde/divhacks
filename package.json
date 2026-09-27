@@ -9,6 +9,7 @@
     "lint": "eslint",
     "predev": "node scripts/copy-maplibre-worker.mjs",
     "prebuild": "node scripts/copy-maplibre-worker.mjs",
+    "forecast:build": "tsx scripts/build-forecast.ts",
     "test": "tsx --test tests/*.test.ts",
     "test:e2e": "playwright test"
   },

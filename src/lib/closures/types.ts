@@ -24,6 +24,8 @@ export type ClosureProperties = {
   sourceUrl: string;
   pedestrianImpact: "unknown" | "blocked" | "open";
   vehicleImpact?: "unknown" | "blocked" | "clear";
+  // Forecast from past permits rather than a live permit.
+  predicted?: boolean;
 };
 export type ClosureFeature = Feature<ClosureGeometry, ClosureProperties>;
 export type SourceStatus = {

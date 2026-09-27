@@ -441,6 +441,7 @@ svg {
 }
 .filter-chips {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 .filter-chip {
@@ -836,6 +837,28 @@ svg {
   background: var(--error);
   color: var(--on-error);
 }
+.closure-icon.predicted,
+.detail-type.predicted {
+  background: var(--warning);
+  color: var(--on-warning);
+}
+.forecast-date {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 0;
+  font-size: 0.875rem;
+}
+.forecast-date input {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--background);
+  color: var(--foreground);
+  font: inherit;
+  min-height: 40px;
+  padding: 6px 10px;
+  margin-left: auto;
+}
 .closure-row-copy {
   display: flex;
   flex-direction: column;
@@ -919,6 +942,9 @@ svg {
   color: var(--foreground);
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+.map-timeline[hidden] {
+  display: none;
 }
 .map-timeline {
   position: absolute;
@@ -1032,6 +1058,13 @@ svg {
 }
 .legend-line.construction {
   background: var(--on-error);
+}
+.legend-line.predicted {
+  background: repeating-linear-gradient(
+    90deg,
+    #b7791f 0 5px,
+    transparent 5px 8px
+  );
 }
 .legend-point {
   width: 9px;

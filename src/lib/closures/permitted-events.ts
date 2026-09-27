@@ -79,7 +79,10 @@ function queryUrl() {
   return `${PERMITTED_EVENTS_URL}?${params}`;
 }
 
-function impactFor(closureType: string) {
+export function impactFor(closureType: string): {
+  pedestrianImpact: "unknown" | "blocked" | "open";
+  vehicleImpact: "unknown" | "blocked" | "clear";
+} {
   const normalized = closureType.toLowerCase();
   const pedestrianImpact =
     normalized.includes("sidewalk") || normalized === "pedestrian plaza"

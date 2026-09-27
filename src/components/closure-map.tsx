@@ -201,6 +201,14 @@ function coneFeature(
   };
 }
 
+const PREDICTION_COLOR = "#B7791F";
+const CLICKABLE_LAYERS = [
+  "closure-lines",
+  "closure-points",
+  "prediction-lines",
+  "prediction-points",
+];
+
 type Props = {
   features: ClosureFeature[];
   selected: ClosureFeature | null;
@@ -420,7 +428,11 @@ export function ClosureMap({
         id: "closure-lines",
         type: "line",
         source: "closures",
-        filter: ["!=", ["geometry-type"], "Point"],
+        filter: [
+          "all",
+          ["!=", ["geometry-type"], "Point"],
+          ["!=", ["get", "predicted"], true],
+        ],
         layout: { "line-cap": "round", "line-join": "round" },
         paint: {
           "line-color": color,
@@ -441,10 +453,68 @@ export function ClosureMap({
         id: "closure-points",
         type: "circle",
         source: "closures",
-        filter: ["==", ["geometry-type"], "Point"],
+        filter: [
+          "all",
+          ["==", ["geometry-type"], "Point"],
+          ["!=", ["get", "predicted"], true],
+        ],
         paint: {
           "circle-color": "#F8DEDC",
           "circle-stroke-color": "#873C38",
+          "circle-stroke-width": 2,
+          "circle-radius": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            9,
+            2,
+            14,
+            5,
+            18,
+            7,
+          ],
+        },
+      });
+      // Forecasts share the closures source but stay dashed so they never
+      // read as a live permit.
+      map.addLayer({
+        id: "prediction-lines",
+        type: "line",
+        source: "closures",
+        filter: [
+          "all",
+          ["!=", ["geometry-type"], "Point"],
+          ["==", ["get", "predicted"], true],
+        ],
+        layout: { "line-join": "round" },
+        paint: {
+          "line-color": PREDICTION_COLOR,
+          "line-dasharray": [1.5, 1.2],
+          "line-width": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            9,
+            1.5,
+            14,
+            4,
+            18,
+            7,
+          ],
+        },
+      });
+      map.addLayer({
+        id: "prediction-points",
+        type: "circle",
+        source: "closures",
+        filter: [
+          "all",
+          ["==", ["geometry-type"], "Point"],
+          ["==", ["get", "predicted"], true],
+        ],
+        paint: {
+          "circle-color": "#FFF0CD",
+          "circle-stroke-color": PREDICTION_COLOR,
           "circle-stroke-width": 2,
           "circle-radius": [
             "interpolate",
@@ -618,7 +688,7 @@ export function ClosureMap({
           [e.point.x - 40, e.point.y - 40],
           [e.point.x + 40, e.point.y + 40],
         ],
-        { layers: ["closure-lines", "closure-points"] },
+        { layers: CLICKABLE_LAYERS },
       );
       if (found[0]) {
         props.current.onSelect(String(found[0].properties.id));
@@ -629,7 +699,7 @@ export function ClosureMap({
     map.on("mousemove", (e) => {
       if (map.getLayer("closure-lines"))
         map.getCanvas().style.cursor = map.queryRenderedFeatures(e.point, {
-          layers: ["closure-lines", "closure-points"],
+          layers: CLICKABLE_LAYERS,
         }).length
           ? "pointer"
           : "";
@@ -1035,6 +1105,12 @@ export function ClosureMap({
           <i className="legend-point" />
           Intersection
         </span>
+        {features.some((feature) => feature.properties.predicted) && (
+          <span>
+            <i className="legend-line predicted" />
+            Predicted
+          </span>
+        )}
       </div>
       <button
         className="fit-map"

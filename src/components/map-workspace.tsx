@@ -35,6 +35,7 @@ import {
   X,
   AlertTriangle,
   Clock3,
+  TrendingUp,
 } from "lucide-react";
 import type {
   ClosureFeature,
@@ -56,6 +57,12 @@ import type {
   TravelMode,
 } from "@/lib/routing/types";
 import { DEMO_LOCATION } from "@/lib/location";
+import {
+  predictionFeature,
+  predictionLocation,
+  type ForecastApiPrediction,
+  type ForecastApiResponse,
+} from "@/lib/forecast/client";
 import { ThemeToggle } from "@/components/theme-toggle";
 import type {
   GeocodeResponse,
@@ -240,7 +247,11 @@ export function MapWorkspace() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0);
-  const [kind, setKind] = useState<"all" | ClosureKind>("all");
+  const [kind, setKind] = useState<"all" | ClosureKind | "predicted">("all");
+  const [forecastDate, setForecastDate] = useState("");
+  const [forecast, setForecast] = useState<ForecastApiResponse | null>(null);
+  const [forecastLoading, setForecastLoading] = useState(false);
+  const [forecastError, setForecastError] = useState("");
   const [query, setQuery] = useState("");
   const search = useDeferredValue(query.trim().toLowerCase());
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -305,6 +316,7 @@ export function MapWorkspace() {
       const now = Date.now();
       setTimelineAnchor(now);
       setDepartureTime(newYorkDateTimeInput(0, now));
+      setForecastDate(newYorkDateTimeInput(0, now).slice(0, 10));
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
@@ -500,6 +512,68 @@ export function MapWorkspace() {
     };
   }, [refresh]);
 
+  useEffect(() => {
+    if (!forecastDate) return;
+    const controller = new AbortController();
+    const load = async () => {
+      setForecastLoading(true);
+      setForecastError("");
+      try {
+        const response = await fetch(
+          `/api/forecast?date=${encodeURIComponent(forecastDate)}`,
+          { signal: controller.signal },
+        );
+        const body = (await response.json()) as
+          | ForecastApiResponse
+          | { error?: string };
+        if (!response.ok || !("predictions" in body)) {
+          throw new Error(
+            ("error" in body && body.error) ||
+              "Predictions couldn’t be loaded. Please retry.",
+          );
+        }
+        setForecast(body);
+      } catch (e) {
+        if (!controller.signal.aborted) {
+          setForecast(null);
+          setForecastError(
+            e instanceof Error
+              ? e.message
+              : "Predictions couldn’t be loaded. Please retry.",
+          );
+        }
+      } finally {
+        if (!controller.signal.aborted) setForecastLoading(false);
+      }
+    };
+    void load();
+    return () => controller.abort();
+  }, [forecastDate]);
+
+  const predictions = useMemo(
+    () =>
+      (forecast?.predictions || []).filter(
+        (prediction) =>
+          !search ||
+          `${prediction.title} ${prediction.locations.join(" ")} ${prediction.borough}`
+            .toLowerCase()
+            .includes(search),
+      ),
+    [forecast, search],
+  );
+  const predictionFeatures = useMemo(
+    () =>
+      forecast
+        ? predictions
+            .map((prediction) =>
+              predictionFeature(prediction, forecast.meta.source),
+            )
+            .filter((feature): feature is ClosureFeature => feature !== null)
+        : EMPTY,
+    [forecast, predictions],
+  );
+  const showingPredictions = kind === "predicted";
+
   const loadedFeatures =
     data?.meta.days === PRELOAD_DAYS ? data.features : EMPTY;
   const timelineWindow = useMemo(
@@ -545,12 +619,29 @@ export function MapWorkspace() {
       ),
     [visible],
   );
+  const mapFeatures = showingPredictions ? predictionFeatures : filtered;
+  const visiblePredictions = useMemo(
+    () =>
+      onlyVisible && bounds
+        ? predictions.filter((prediction) => {
+            const feature = predictionFeatures.find(
+              (f) => f.properties.id === prediction.id,
+            );
+            return feature ? inBounds(feature, bounds) : false;
+          })
+        : predictions,
+    [bounds, onlyVisible, predictionFeatures, predictions],
+  );
+  const selectedPrediction = showingPredictions && selectedId
+    ? predictions.find((prediction) => prediction.id === selectedId) || null
+    : null;
   const selected = selectedId
-    ? filtered.find((f) => f.properties.id === selectedId) || null
+    ? mapFeatures.find((f) => f.properties.id === selectedId) || null
     : null;
   const onSelect = useCallback((id: string) => {
     setSelectedId(id);
-    setAvoidClosureIds([id]);
+    // Routing only avoids live permits; a forecast id would match nothing.
+    setAvoidClosureIds(id.startsWith("forecast-") ? [] : [id]);
     setSourcesOpen(false);
     setExpanded(true);
   }, []);
@@ -1056,7 +1147,7 @@ export function MapWorkspace() {
       <main className="workspace">
         <section className="map-region" aria-label="Closure map">
           <ClosureMap
-            features={filtered}
+            features={mapFeatures}
             selected={selected}
             route={route}
             routeLines={displayedRouteLines}
@@ -1170,7 +1261,11 @@ export function MapWorkspace() {
               <ChevronRight size={15} />
             </button>
           )}
-          <div className="map-timeline" aria-label="Disruption timeline">
+          <div
+            className="map-timeline"
+            aria-label="Disruption timeline"
+            hidden={showingPredictions}
+          >
             <div className="timeline-heading">
               <span className="timeline-title">
                 <CalendarDays size={15} /> Live at
@@ -1306,6 +1401,13 @@ export function MapWorkspace() {
                 </a>
               </div>
             </>
+          ) : selectedPrediction && forecast ? (
+            <ForecastDetails
+              prediction={selectedPrediction}
+              disclaimer={forecast.meta.disclaimer}
+              sourceUrl={forecast.meta.source}
+              onBack={() => setSelectedId(null)}
+            />
           ) : selected ? (
             selected.properties.kind === "event" ? (
               <EventStory
@@ -1453,17 +1555,35 @@ export function MapWorkspace() {
                     </button>
                   )}
                 </div>
-                <div className="time-filter">
-                  <CalendarDays size={17} />
-                  <span>Live at selected hour</span>
-                  <span>NYC time · 7-day window</span>
-                </div>
+                {showingPredictions ? (
+                  <label className="forecast-date">
+                    <TrendingUp size={17} />
+                    <span>Predicted for</span>
+                    <input
+                      type="date"
+                      value={forecastDate}
+                      onChange={(e) => {
+                        if (!e.target.value) return;
+                        setForecastDate(e.target.value);
+                        setSelectedId(null);
+                        setLimit(40);
+                      }}
+                    />
+                  </label>
+                ) : (
+                  <div className="time-filter">
+                    <CalendarDays size={17} />
+                    <span>Live at selected hour</span>
+                    <span>NYC time · 7-day window</span>
+                  </div>
+                )}
                 <div className="filter-chips" aria-label="Closure type">
                   {(
                     [
                       ["all", "All", features.length],
                       ["event", "Events", eventCount],
                       ["construction", "Construction", constructionCount],
+                      ["predicted", "Predicted", forecast?.predictions.length],
                     ] as const
                   ).map(([value, label, n]) => (
                     <button
@@ -1472,18 +1592,27 @@ export function MapWorkspace() {
                       aria-pressed={kind === value}
                       onClick={() => {
                         setKind(value);
+                        setSelectedId(null);
                         setLimit(40);
                       }}
                     >
                       {kind === value && <Check size={14} />} {label}
-                      <span>{loading && !data ? "–" : count.format(n)}</span>
+                      <span>
+                        {n === undefined || (loading && !data)
+                          ? "–"
+                          : count.format(n)}
+                      </span>
                     </button>
                   ))}
                 </div>
               </div>
               <div className="list-toolbar">
                 <div className="row-between">
-                  <h2>Current disruptions</h2>
+                  <h2>
+                    {showingPredictions
+                      ? "Predicted closures"
+                      : "Current disruptions"}
+                  </h2>
                   <button
                     className="icon-button"
                     title="Refresh closures"
@@ -1506,6 +1635,96 @@ export function MapWorkspace() {
                   Only in this map view
                 </label>
               </div>
+              {showingPredictions ? (
+                <div
+                  className="panel-scroll closure-results"
+                  aria-busy={forecastLoading}
+                >
+                  <div className="inline-alert" role="note">
+                    <Info size={18} />
+                    <div>
+                      <strong>Predictions, not permits</strong>
+                      <p>
+                        {forecast?.meta.disclaimer ||
+                          "Predicted from past NYC permits, not a confirmed closure."}{" "}
+                        Routes only avoid live closures.
+                      </p>
+                    </div>
+                  </div>
+                  {forecastError ? (
+                    <div className="inline-alert error" role="alert">
+                      <AlertTriangle size={19} />
+                      <div>
+                        <strong>Couldn’t load predictions</strong>
+                        <p>{forecastError}</p>
+                      </div>
+                    </div>
+                  ) : forecastLoading && !forecast ? (
+                    <div className="loading-rows" role="status">
+                      <span className="sr-only">Loading predictions</span>
+                      {[0, 1, 2].map((i) => (
+                        <div key={i}>
+                          <span />
+                          <span />
+                          <span />
+                        </div>
+                      ))}
+                    </div>
+                  ) : visiblePredictions.length ? (
+                    <ul className="closure-list">
+                      {visiblePredictions.slice(0, limit).map((prediction) => (
+                        <li key={prediction.id}>
+                          <button
+                            className="closure-row"
+                            onClick={() => onSelect(prediction.id)}
+                          >
+                            <span className="closure-icon predicted">
+                              <TrendingUp size={19} />
+                            </span>
+                            <span className="closure-row-copy">
+                              <span className="closure-category">
+                                Predicted
+                                <span> · {prediction.borough}</span>
+                              </span>
+                              <strong>{prediction.title}</strong>
+                              <span className="closure-location">
+                                {prediction.pattern} · seen{" "}
+                                {prediction.yearsObserved.length} of{" "}
+                                {prediction.yearsExpected} years
+                              </span>
+                              <span className="closure-date">
+                                <Clock3 size={12} />
+                                {prediction.start
+                                  ? `Around ${date(Date.parse(prediction.start), true)}`
+                                  : prediction.date}
+                                {!prediction.geometry && " · Not on map"}
+                              </span>
+                            </span>
+                            <ChevronRight size={17} className="row-chevron" />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="empty-state">
+                      <TrendingUp size={27} />
+                      <h3>No predicted closures for this day</h3>
+                      <p>
+                        No yearly pattern was found for this date. That does
+                        not mean streets will be clear.
+                      </p>
+                    </div>
+                  )}
+                  {visiblePredictions.length > limit && (
+                    <button
+                      className="load-more button secondary"
+                      onClick={() => setLimit((n) => n + 40)}
+                    >
+                      Show 40 more <ChevronDown size={16} />
+                    </button>
+                  )}
+                </div>
+              ) : (
               <div className="panel-scroll closure-results" aria-busy={loading}>
                 {error && (
                   <div className="inline-alert error" role="alert">
@@ -1641,6 +1860,7 @@ export function MapWorkspace() {
                   </p>
                 )}
               </div>
+              )}
               <footer className="panel-footer">
                 <Info size={16} />
                 <p>
@@ -1850,6 +2070,112 @@ function DestinationSearch({
           ))}
         </ul>
       )}
+    </>
+  );
+}
+
+const ACCESS_LABELS = {
+  blocked: "Usually closed",
+  open: "Usually open",
+  clear: "Usually open",
+  unknown: "Not specified",
+} as const;
+
+function ForecastDetails({
+  prediction,
+  disclaimer,
+  sourceUrl,
+  onBack,
+}: {
+  prediction: ForecastApiPrediction;
+  disclaimer: string;
+  sourceUrl: string;
+  onBack: () => void;
+}) {
+  const years = prediction.yearsObserved;
+  return (
+    <>
+      <div className="panel-heading detail-heading">
+        <button className="back-button" onClick={onBack}>
+          <ArrowLeft size={18} /> Predicted closures
+        </button>
+        <span className="detail-type predicted">
+          <TrendingUp size={15} /> Predicted street closure
+        </span>
+        <h1>{prediction.title}</h1>
+        <p>{predictionLocation(prediction)}</p>
+      </div>
+      <div className="panel-scroll detail-content">
+        <div className="inline-alert" role="note">
+          <Info size={18} />
+          <div>
+            <strong>Not a confirmed closure</strong>
+            <p>{disclaimer}</p>
+          </div>
+        </div>
+        <dl>
+          <div>
+            <dt>Pattern</dt>
+            <dd>{prediction.pattern}</dd>
+          </div>
+          <div>
+            <dt>Track record</dt>
+            <dd>
+              Seen {years.length} of {prediction.yearsExpected} years (
+              {years[0]}–{years[years.length - 1]})
+            </dd>
+          </div>
+          <div>
+            <dt>Confidence</dt>
+            <dd>{prediction.confidence === "high" ? "High" : "Medium"}</dd>
+          </div>
+          <div>
+            <dt>Likely window</dt>
+            <dd>
+              {prediction.start && prediction.end ? (
+                <>
+                  {date(Date.parse(prediction.start), true)}
+                  <br />
+                  to {date(Date.parse(prediction.end), true)}
+                </>
+              ) : (
+                prediction.date
+              )}
+              <span className="detail-timezone">
+                Eastern time · Typical hours from past permits
+              </span>
+            </dd>
+          </div>
+          <div>
+            <dt>Past closure type</dt>
+            <dd>{prediction.closureType || "Not specified"}</dd>
+          </div>
+          <div>
+            <dt>Sidewalks</dt>
+            <dd>{ACCESS_LABELS[prediction.pedestrianImpact]}</dd>
+          </div>
+          <div>
+            <dt>Roads</dt>
+            <dd>{ACCESS_LABELS[prediction.vehicleImpact]}</dd>
+          </div>
+          <div>
+            <dt>Mapped as</dt>
+            <dd>
+              {prediction.geometry
+                ? "Streets from the most recent year"
+                : "Streets couldn’t be mapped"}
+            </dd>
+          </div>
+        </dl>
+        <a
+          className="button primary source-link"
+          href={sourceUrl.replace("/resource/", "/d/").replace(/\.json$/, "")}
+          target="_blank"
+          rel="noreferrer"
+        >
+          View permit history <ArrowUpRight size={17} />
+        </a>
+      </div>
     </>
   );
 }
