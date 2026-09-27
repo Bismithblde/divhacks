@@ -1013,7 +1013,7 @@ export function MapWorkspace() {
     selectedTrip
       ? {
           durationSeconds: selectedTrip.durationSeconds,
-          modeLabel: "transit",
+          modeLabel: routeModeLabel,
         }
       : routeLabel;
 
