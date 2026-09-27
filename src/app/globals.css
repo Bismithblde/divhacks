@@ -611,6 +611,29 @@ svg {
   color: var(--muted);
   font-size: 0.75rem;
 }
+.route-destination-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 6px 0 12px;
+}
+.route-destination-row .route-destination {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.route-clear {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 .route-planner label {
   display: block;
   margin-bottom: 6px;
@@ -2367,11 +2390,18 @@ svg {
   flex-direction: column;
   gap: 4px;
 }
+.trip-result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  margin-top: 19px;
+}
 .trip-recheck {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  margin-top: 19px;
+  margin-top: 0;
   padding: 0;
   border: 0;
   background: transparent;

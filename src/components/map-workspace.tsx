@@ -1107,6 +1107,20 @@ export function MapWorkspace() {
           modeLabel: routeModeLabel,
         }
       : routeLabel;
+  const routeIsShown = Boolean(
+    route || activeTrip || displayOptions.length > 0,
+  );
+  const clearDisplayedRoute = () => {
+    setRoute(null);
+    setRouteResponse(null);
+    setTripResponse(null);
+    setSelectedTripId(null);
+    setDirectRouteOptions([]);
+    setUsingAlternative(false);
+    setRouteError("");
+    setActiveTrip(null);
+    setTripDecision(null);
+  };
 
   return (
     <div className="app-shell">
@@ -1445,10 +1459,21 @@ export function MapWorkspace() {
                     />
                   )}
                   <div className="route-planner route-details">
-                    <p className="route-destination">
-                      To{" "}
-                      {destinationLabel || "Selected destination"}
-                    </p>
+                    <div className="route-destination-row">
+                      <p className="route-destination">
+                        To{" "}
+                        {destinationLabel || "Selected destination"}
+                      </p>
+                      {routeIsShown && (
+                        <button
+                          className="route-clear"
+                          type="button"
+                          onClick={clearDisplayedRoute}
+                        >
+                          Clear route
+                        </button>
+                      )}
+                    </div>
                     <label htmlFor="route-departure">Departure · NYC time</label>
                     <input
                       id="route-departure"

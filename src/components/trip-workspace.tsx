@@ -166,6 +166,12 @@ export function TripWorkspace() {
     }
   };
 
+  const clearPlan = () => {
+    setPlan(null);
+    setDecision(null);
+    setError("");
+  };
+
   const recheck = async () => {
     if (!plan?.plan || !destination) return;
     setRechecking(true);
@@ -334,7 +340,7 @@ export function TripWorkspace() {
         )}
 
         {plan?.status === "ok" && plan.plan && (
-          <TripPlanCard plan={plan.plan} explanation={plan.explanation} warnings={plan.warnings} onRecheck={recheck} rechecking={rechecking} />
+          <TripPlanCard plan={plan.plan} explanation={plan.explanation} warnings={plan.warnings} onClear={clearPlan} onRecheck={recheck} rechecking={rechecking} />
         )}
         {decision && (
           <DecisionCard decision={decision} />
@@ -363,12 +369,14 @@ function TripPlanCard({
   plan,
   explanation,
   warnings,
+  onClear,
   onRecheck,
   rechecking,
 }: {
   plan: ScoredItinerary;
   explanation?: TripPlanResponse["explanation"];
   warnings: TripPlanResponse["warnings"];
+  onClear: () => void;
   onRecheck: () => void;
   rechecking: boolean;
 }) {
@@ -417,10 +425,15 @@ function TripPlanCard({
           <div>{warnings.map((warning) => <span key={warning.code}>{warning.message}</span>)}</div>
         </div>
       )}
-      <button className="trip-recheck" type="button" onClick={onRecheck} disabled={rechecking}>
-        <RefreshCw size={16} className={rechecking ? "spin" : ""} />
-        {rechecking ? "Checking live conditions…" : "Something changed? Recheck my trip"}
-      </button>
+      <div className="trip-result-actions">
+        <button className="trip-recheck" type="button" onClick={onClear}>
+          Clear route
+        </button>
+        <button className="trip-recheck" type="button" onClick={onRecheck} disabled={rechecking}>
+          <RefreshCw size={16} className={rechecking ? "spin" : ""} />
+          {rechecking ? "Checking live conditions…" : "Something changed? Recheck my trip"}
+        </button>
+      </div>
     </section>
   );
 }
