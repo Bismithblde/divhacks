@@ -21,7 +21,7 @@ query Plan($originLat: CoordinateValue!, $originLon: CoordinateValue!, $destinat
       direct: [WALK]
       transit: { transit: [{ mode: SUBWAY }, { mode: BUS }] }
     }
-    first: 5
+    first: 3
   ) {
     routingErrors { code description }
     edges {
@@ -331,13 +331,26 @@ export class OpenTripPlannerRouter implements TransitRouter {
         edge.node ? normalizeItinerary(edge.node, index, input) : null,
       )
       .filter((value): value is TransitItinerary => Boolean(value));
+    return itineraries;
+  }
+
+  async enrichRealtime(
+    itineraries: TransitItinerary[],
+  ): Promise<TransitItinerary[]> {
     if (!process.env.MTA_BUS_TIME_API_KEY) return itineraries;
     const busClient = new MtaBusTimeClient();
     return Promise.all(
       itineraries.map(async (itinerary) => {
-        const busLegs = itinerary.legs.filter(
-          (leg) => leg.mode === "BUS" && leg.fromStopId,
-        );
+        const busLegs = [
+          ...new Map(
+            itinerary.legs
+              .filter((leg) => leg.mode === "BUS" && leg.fromStopId)
+              .map((leg) => [
+                `${leg.fromStopId}:${leg.routeName || ""}`,
+                leg,
+              ]),
+          ).values(),
+        ];
         if (!busLegs.length) return itinerary;
         const results = await Promise.all(
           busLegs.map((leg) =>

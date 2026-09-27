@@ -271,6 +271,9 @@ export type TransitPlanInput = {
 
 export interface TransitRouter {
   plan(input: TransitPlanInput): Promise<TransitItinerary[]>;
+  enrichRealtime?(
+    itineraries: TransitItinerary[],
+  ): Promise<TransitItinerary[]>;
 }
 
 export interface WalkingRouter {

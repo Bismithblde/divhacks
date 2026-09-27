@@ -1,5 +1,5 @@
-import { MapWorkspace } from "@/components/map-workspace";
+import { LandingPage } from "@/components/landing-page";
 
 export default function Home() {
-  return <MapWorkspace />;
+  return <LandingPage />;
 }

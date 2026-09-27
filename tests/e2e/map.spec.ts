@@ -20,7 +20,7 @@ test("real NYC feeds render; filter, inspect, search, and change time window", a
   const responsePromise = page.waitForResponse((r) =>
     r.url().includes("/api/closures?days=7"),
   );
-  await page.goto("/");
+  await page.goto("/map");
   const response = await responsePromise;
   expect(response.status()).toBe(200);
   const body: ClosureResponse = await response.json();
@@ -145,7 +145,7 @@ test("requests location on load and displays an in-coverage position", async ({
 }) => {
   await context.grantPermissions(["geolocation"]);
   await context.setGeolocation({ latitude: 40.735, longitude: -73.985 });
-  await page.goto("/");
+  await page.goto("/map");
   await expect(page.getByTestId("closure-map")).toHaveAttribute(
     "data-location-visible",
     "true",
@@ -169,7 +169,7 @@ test("searches an NYC destination and places it on the map", async ({ page }) =>
       }),
     });
   });
-  await page.goto("/");
+  await page.goto("/map");
   await expect(page.getByTestId("closure-map")).toHaveAttribute(
     "data-ready",
     "true",
@@ -293,7 +293,7 @@ test("selects a destination and renders verified walking and driving routes", as
       }),
     });
   });
-  await page.goto("/");
+  await page.goto("/map");
   await expect(page.getByTestId("closure-map")).toHaveAttribute(
     "data-ready",
     "true",
@@ -374,7 +374,7 @@ test("does not render a route when walking directions are unavailable", async ({
       }),
     });
   });
-  await page.goto("/");
+  await page.goto("/map");
   await expect(page.getByTestId("closure-map")).toHaveAttribute(
     "data-ready",
     "true",
@@ -409,7 +409,7 @@ test("failed feed gives a retry flow rather than claiming clear streets", async 
       });
     else await route.continue();
   });
-  await page.goto("/");
+  await page.goto("/map");
   await expect(page.locator(".inline-alert.error")).toContainText(
     "Couldn’t load closures",
   );
@@ -433,7 +433,7 @@ test('partial coverage remains visible and source details identify the outage', 
     body.meta.sources[0] = { ...body.meta.sources[0], status: 'unavailable', total: 0, updatedAt: null, fetchedAt: null, message: 'This city feed could not be loaded. Retry shortly.' };
     await route.fulfill({ response, json: body });
   });
-  await page.goto('/');
+  await page.goto('/map');
   await expect(page.getByRole('button', { name: 'Closure data may be incomplete' })).toBeVisible();
   await page.getByRole('button', { name: 'Closure data may be incomplete' }).click();
   await expect(page.locator('.source-state.unavailable')).toHaveText('Unavailable');
@@ -443,7 +443,7 @@ test('partial coverage remains visible and source details identify the outage', 
 test('map controls work and out-of-coverage geolocation gives useful feedback', async ({ page, context },testInfo) => {
   await context.grantPermissions(['geolocation']);
   await context.setGeolocation({latitude:41.8,longitude:-87.6});
-  await page.goto('/');
+  await page.goto('/map');
   await expect(page.getByTestId('closure-map')).toHaveAttribute('data-ready','true',{timeout:45000});
   const scale=page.locator('.maplibregl-ctrl-scale');
   const initial=await scale.textContent();

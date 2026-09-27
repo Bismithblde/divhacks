@@ -9,7 +9,6 @@ import { loadPermittedEventSource } from "./permitted-events";
 import type { ClosureFeature, SourceStatus } from "./types";
 
 const TTL = 5 * 60_000;
-const STALE_LIMIT = 60 * 60_000;
 const CHUNK_SIZE = 100;
 type Snapshot = {
   features: ClosureFeature[];
@@ -129,15 +128,6 @@ async function load(source: SourceDefinition): Promise<Snapshot> {
         `Closure source ${source.id}:`,
         error instanceof Error ? error.message : "unavailable",
       );
-      if (previous && Date.now() - previous.cachedAt < STALE_LIMIT)
-        return {
-          ...previous,
-          status: {
-            ...previous.status,
-            status: "stale",
-            message: "Refresh failed. Showing the last successful download.",
-          },
-        };
       return {
         features: [],
         cachedAt: 0,

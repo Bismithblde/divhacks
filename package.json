@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint",
     "predev": "node scripts/copy-maplibre-worker.mjs",
@@ -17,6 +17,9 @@
     "@langchain/core": "^1.2.12",
     "@langchain/langgraph": "^1.4.18",
     "@mapbox/polyline": "^1.2.1",
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.117.2",
+    "gsap": "^3.15.0",
     "lucide-react": "^1.48.0",
     "maplibre-gl": "^6.11.2",
     "next": "16.3.6",

@@ -70,7 +70,7 @@ test("loads and caches a compact event story on demand", async ({ page }) => {
       body: JSON.stringify({
         tags: ["Food festival", "Road closure"],
         keywords: ["food", "festival"],
-        facts: ["Official event footprint is on Mulberry Street."],
+        about: ["A neighborhood festival likely centered on Italian culture."],
         roadImpact: "fully-closed",
         pedestrianImpact: "crowded",
         confidence: "medium",
@@ -81,7 +81,9 @@ test("loads and caches a compact event story on demand", async ({ page }) => {
     });
   });
 
-  await page.goto("/");
+  await page.goto("/map");
+  const expandPanel = page.getByRole("button", { name: "Expand closure panel" });
+  if (await expandPanel.isVisible()) await expandPanel.click();
   await page.getByText("San Gennaro Festival", { exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Event brief" }),

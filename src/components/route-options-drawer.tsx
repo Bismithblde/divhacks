@@ -40,6 +40,18 @@ function optionSummary(option: RouteOption) {
   return transit.length ? transit.join(" → ") : "Direct route";
 }
 
+function stepGroups(steps: RouteStep[]) {
+  return steps.reduce<Array<{ mode: RouteStep["mode"]; steps: RouteStep[] }>>(
+    (groups, step) => {
+      const previous = groups[groups.length - 1];
+      if (previous?.mode === step.mode) previous.steps.push(step);
+      else groups.push({ mode: step.mode, steps: [step] });
+      return groups;
+    },
+    [],
+  );
+}
+
 export function RouteOptionsDrawer({
   options,
   selectedId,
@@ -55,6 +67,9 @@ export function RouteOptionsDrawer({
 }) {
   const selected = options.find((option) => option.id === selectedId) || options[0];
   const [stepsOpen, setStepsOpen] = useState(true);
+  const [walkingGroupsOpen, setWalkingGroupsOpen] = useState<
+    Record<string, boolean>
+  >({});
 
   if (!selected) return null;
 
@@ -130,17 +145,83 @@ export function RouteOptionsDrawer({
         </button>
         {stepsOpen && (
           <ol className="route-step-list" data-testid="route-steps">
-            {selected.steps.map((step) => (
-              <li key={step.id} className={`route-step ${step.mode.toLowerCase()}`}>
-                <span className="route-step-icon">{icon(step.mode)}</span>
-                <span className="route-step-copy">
-                  <strong>{step.instruction}</strong>
-                  <small>
-                    {clock(step.startTime)} · {duration(step.durationSeconds)}
-                  </small>
-                </span>
-              </li>
-            ))}
+            {stepGroups(selected.steps).map((group, groupIndex) => {
+              if (group.mode === "WALK") {
+                const groupId = `${selected.id}-walk-${groupIndex}`;
+                const isOpen = Boolean(walkingGroupsOpen[groupId]);
+                const walkingSeconds = group.steps.reduce(
+                  (total, step) => total + step.durationSeconds,
+                  0,
+                );
+                return (
+                  <li className="route-walking-group" key={groupId}>
+                    <button
+                      type="button"
+                      className="route-walking-toggle"
+                      aria-expanded={isOpen}
+                      onClick={() =>
+                        setWalkingGroupsOpen((current) => ({
+                          ...current,
+                          [groupId]: !isOpen,
+                        }))
+                      }
+                    >
+                      <span className="route-step-icon">
+                        {icon("WALK")}
+                      </span>
+                      <span className="route-step-copy">
+                        <strong>Walk · {duration(walkingSeconds)}</strong>
+                        <small>
+                          {group.steps.length} instruction
+                          {group.steps.length === 1 ? "" : "s"} · arrows show
+                          direction on the map
+                        </small>
+                      </span>
+                      <ChevronDown
+                        size={16}
+                        aria-hidden="true"
+                        className={isOpen ? "rotate-180" : ""}
+                      />
+                    </button>
+                    {isOpen && (
+                      <ol className="route-walking-steps">
+                        {group.steps.map((step) => (
+                          <li
+                            key={step.id}
+                            className={`route-step ${step.mode.toLowerCase()}`}
+                          >
+                            <span className="route-step-icon">
+                              {icon(step.mode)}
+                            </span>
+                            <span className="route-step-copy">
+                              <strong>{step.instruction}</strong>
+                              <small>
+                                {clock(step.startTime)} ·{" "}
+                                {duration(step.durationSeconds)}
+                              </small>
+                            </span>
+                          </li>
+                        ))}
+                      </ol>
+                    )}
+                  </li>
+                );
+              }
+              return group.steps.map((step) => (
+                <li
+                  key={step.id}
+                  className={`route-step ${step.mode.toLowerCase()}`}
+                >
+                  <span className="route-step-icon">{icon(step.mode)}</span>
+                  <span className="route-step-copy">
+                    <strong>{step.instruction}</strong>
+                    <small>
+                      {clock(step.startTime)} · {duration(step.durationSeconds)}
+                    </small>
+                  </span>
+                </li>
+              ));
+            })}
           </ol>
         )}
         {onStart && (

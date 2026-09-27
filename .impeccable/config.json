@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "src/app/globals.css"
+        ],
+        "createdAt": "2026-09-27T03:54:56.942Z",
+        "reason": "False positive: the 2px border-left at line 3713 draws the small auth brand glyph with its top border; it is not an accent border on a card."
+      }
+    ]
+  }
+}

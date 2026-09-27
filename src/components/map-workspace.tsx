@@ -268,6 +268,7 @@ export function MapWorkspace() {
   const [destinationLabel, setDestinationLabel] = useState("");
   const [selectingDestination, setSelectingDestination] = useState(false);
   const [destinationSearch, setDestinationSearch] = useState("");
+  const destinationSearchCache = useRef(new Map<string, GeocodeResult[]>());
   const [destinationResults, setDestinationResults] = useState<GeocodeResult[]>(
     [],
   );
@@ -724,42 +725,43 @@ export function MapWorkspace() {
     setRouteError("");
     setExpanded(true);
   }, []);
-  const lookupPlaces = async (query: string) => {
+  const lookupPlaces = useCallback(async (query: string, signal?: AbortSignal) => {
+    const normalizedQuery = query.trim().replace(/\s+/g, " ");
+    const cacheKey = normalizedQuery.toLowerCase();
+    const cached = destinationSearchCache.current.get(cacheKey);
+    if (cached) return cached;
     const response = await fetch(
-      `/api/geocode?q=${encodeURIComponent(query)}`,
+      `/api/geocode?q=${encodeURIComponent(normalizedQuery)}`,
+      { signal },
     );
     const body = (await response.json()) as GeocodeResponse;
     if (!response.ok) {
       throw new Error(body.error || "Address search is unavailable right now.");
     }
+    if (destinationSearchCache.current.size >= 30) {
+      const oldest = destinationSearchCache.current.keys().next().value;
+      if (oldest) destinationSearchCache.current.delete(oldest);
+    }
+    destinationSearchCache.current.set(cacheKey, body.results);
     return body.results;
-  };
+  }, []);
 
   useEffect(() => {
     if (destination) return;
 
-    const query = destinationSearch.trim();
-    if (query.length < 2) return;
+    const query = destinationSearch.trim().replace(/\s+/g, " ");
+    if (query.length < 3) return;
 
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       setDestinationSearchLoading(true);
       setDestinationSearchError("");
       try {
-        const response = await fetch(
-          `/api/geocode?q=${encodeURIComponent(query)}`,
-          { signal: controller.signal },
-        );
-        const body = (await response.json()) as GeocodeResponse;
-        if (!response.ok) {
-          throw new Error(
-            body.error || "Address search is unavailable right now.",
-          );
-        }
+        const results = await lookupPlaces(query, controller.signal);
         if (controller.signal.aborted) return;
-        setDestinationResults(body.results);
+        setDestinationResults(results);
         setDestinationActiveIndex(-1);
-        if (!body.results.length) {
+        if (!results.length) {
           setDestinationSearchError("No NYC places matched that search.");
         }
       } catch (error) {
@@ -773,13 +775,13 @@ export function MapWorkspace() {
       } finally {
         if (!controller.signal.aborted) setDestinationSearchLoading(false);
       }
-    }, 250);
+    }, destinationSearchCache.current.has(query.toLowerCase()) ? 0 : 450);
 
     return () => {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [destination, destinationSearch]);
+  }, [destination, destinationSearch, lookupPlaces]);
 
   const chooseDestinationResult = (result: GeocodeResult) => {
     setDestination(result.coordinate);
@@ -1059,6 +1061,28 @@ export function MapWorkspace() {
   const sourceWarning = data?.meta.sources.some(
     (s) => s.status !== "ok" || s.unmapped > 0,
   );
+  useEffect(() => {
+    if (!sourceWarning) return;
+    console.warn(
+      "Closure data may be incomplete:",
+      data?.meta.sources
+        .filter((source) => source.status !== "ok" || source.unmapped > 0)
+        .map((source) => ({
+          source: source.label,
+          status: source.status,
+          unmapped: source.unmapped,
+          message: source.message,
+        })),
+    );
+  }, [data?.meta.sources, sourceWarning]);
+  useEffect(() => {
+    if (!routeResponse?.warnings.length) return;
+    console.warn("Route warnings:", routeResponse.warnings);
+  }, [routeResponse]);
+  useEffect(() => {
+    if (!tripResponse?.warnings.length) return;
+    console.warn("Trip warnings:", tripResponse.warnings);
+  }, [tripResponse]);
   const displayedDurationSeconds =
     usingAlternative && routeResponse?.alternative
       ? routeResponse.alternative.durationSeconds
@@ -1128,9 +1152,26 @@ export function MapWorkspace() {
         Skip to closure list
       </a>
       <header className="navbar">
-        <Link href="/" className="brand" aria-label="BlockedNYC map home">
-          <Image src="/logo.png" alt="" width={36} height={36} className="brand-icon" priority />
-          BlockedNYC
+        <Link href="/" className="brand" aria-label="Wrap map home">
+          <span className="brand-mark" aria-hidden="true">
+            <Image
+              src="/brand/wrap-light.png"
+              alt=""
+              width={36}
+              height={36}
+              className="brand-icon brand-icon-light"
+              priority
+            />
+            <Image
+              src="/brand/wrap-dark.png"
+              alt=""
+              width={36}
+              height={36}
+              className="brand-icon brand-icon-dark"
+              priority
+            />
+          </span>
+          Wrap
           <span className="brand-divider" />
           <span className="brand-context">New York City</span>
         </Link>
@@ -1377,7 +1418,6 @@ export function MapWorkspace() {
                     </p>
                     <p>City updated: {updated(s.updatedAt)} ET</p>
                     <p>Retrieved: {updated(s.fetchedAt)} ET</p>
-                    {s.message && <p className="source-warning">{s.message}</p>}
                     <a href={s.url} target="_blank" rel="noreferrer">
                       View official feed <ArrowUpRight size={15} />
                     </a>
@@ -1445,6 +1485,22 @@ export function MapWorkspace() {
               <h1 className="sr-only">Current disruptions</h1>
               {destination && (
                 <>
+                  {routeLoading && !activeTrip && (
+                    <div
+                      className="route-loading-card"
+                      role="status"
+                      aria-live="polite"
+                    >
+                      <span className="route-loading-spinner" aria-hidden="true" />
+                      <span>
+                        <strong>Finding {routeModeLabel} routes…</strong>
+                        <small>
+                          Checking the fastest available options and current
+                          disruptions.
+                        </small>
+                      </span>
+                    </div>
+                  )}
                   {displayOptions.length > 0 && !activeTrip && (
                     <RouteOptionsDrawer
                       options={displayOptions}
@@ -1539,11 +1595,6 @@ export function MapWorkspace() {
                           Use recommended clear route
                         </button>
                       )}
-                    {routeResponse?.warnings.map((warning) => (
-                      <p className="route-warning" key={warning.code}>
-                        {warning.message}
-                      </p>
-                    ))}
                     {routeResponse?.avoidedClosures.length ? (
                       <p className="route-avoided">
                         Avoiding {routeResponse.avoidedClosures.length} mapped
@@ -1773,21 +1824,6 @@ export function MapWorkspace() {
                     </div>
                   </div>
                 )}
-                {sourceWarning && (
-                  <div className="inline-alert" role="status">
-                    <Info size={18} />
-                    <div>
-                      <strong>Some source data is unavailable</strong>
-                      <p>This map may be incomplete.</p>
-                      <button
-                        className="text-button"
-                        onClick={() => setSourcesOpen(true)}
-                      >
-                        Review data sources
-                      </button>
-                    </div>
-                  </div>
-                )}
                 {loading && !features.length ? (
                   <div className="loading-rows" role="status">
                     <span className="sr-only">Loading city closure feeds</span>
@@ -1986,7 +2022,7 @@ function DestinationSearch({
             value={value}
             onChange={(event) => onChange(event.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="Where to go?"
+            placeholder="Address or place"
             autoComplete="off"
             aria-autocomplete="list"
             aria-controls="route-destination-results"
@@ -2030,8 +2066,21 @@ function DestinationSearch({
             className="destination-search-submit"
             type="submit"
             disabled={!canSubmit || routeLoading}
+            aria-label={
+              routeLoading
+                ? "Finding routes"
+                : routeMode === "transit-walk"
+                  ? "Find transit route"
+                  : routeMode === "driving-car"
+                    ? "Find driving route"
+                    : "Find walking route"
+            }
           >
-            {routeLoading ? "Finding…" : `Find ${routeModeVerb}`}
+            {routeLoading ? (
+              <RefreshCw size={19} className="spin" aria-hidden="true" />
+            ) : (
+              <Search size={20} aria-hidden="true" />
+            )}
           </button>
         </div>
         {modeMenuOpen && (

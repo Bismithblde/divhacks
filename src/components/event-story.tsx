@@ -166,19 +166,45 @@ export function EventStory({
               ))}
             </div>
           ) : null}
-          {summary?.facts.length ? (
-            <ul className="event-facts">
-              {summary.facts.map((fact) => (
-                <li key={fact}>{fact}</li>
-              ))}
-            </ul>
+          {summary?.about.length ? (
+            <>
+              <h3>What it may be about</h3>
+              <ul className="event-facts">
+                {summary.about.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </>
           ) : (
             !loading && (
               <p className="event-summary-status">
-                No additional verified event facts are available.
+                No grounded description is available from the event name.
               </p>
             )
           )}
+          <div className="event-walkability">
+            <Footprints size={18} aria-hidden="true" />
+            <div>
+              <span>Can you probably walk through?</span>
+              <strong>
+                {summary
+                  ? summary.pedestrianImpact === "likely-open"
+                    ? "Likely yes"
+                    : summary.pedestrianImpact === "crowded"
+                      ? "Probably, but expect crowds"
+                      : summary.pedestrianImpact === "fully-closed"
+                        ? "Likely no"
+                        : summary.pedestrianImpact === "partially-closed"
+                          ? "Possibly, with restrictions"
+                          : "Unclear"
+                  : "Unclear"}
+              </strong>
+              <small>
+                {summary?.pedestrianReason ||
+                  "The official record does not confirm sidewalk access."}
+              </small>
+            </div>
+          </div>
           <div className="event-impact-grid">
             <div>
               <Car size={17} aria-hidden="true" />
@@ -193,7 +219,7 @@ export function EventStory({
             </div>
             <div>
               <Footprints size={17} aria-hidden="true" />
-              <span>Sidewalks</span>
+              <span>Sidewalk estimate</span>
               <strong>
                 {summary ? impactLabel[summary.pedestrianImpact] : "Unclear"}
               </strong>

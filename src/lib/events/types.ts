@@ -10,7 +10,7 @@ export type EventImpact =
 export type EventSummary = {
   tags: string[];
   keywords: string[];
-  facts: string[];
+  about: string[];
   roadImpact: EventImpact;
   pedestrianImpact: EventImpact;
   confidence: "low" | "medium" | "high";

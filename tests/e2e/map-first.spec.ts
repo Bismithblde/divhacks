@@ -234,6 +234,46 @@ async function chooseDestination(page: Page) {
   await page.getByRole("button", { name: destination.label, exact: true }).click();
 }
 
+test("searches after a pause and reuses suggestions for a repeated place", async ({ page }) => {
+  const queries: string[] = [];
+  await page.route("**/api/closures?*", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        type: "FeatureCollection",
+        features: [],
+        meta: { fetchedAt: new Date().toISOString(), days: 7, sources: [], complete: true },
+      }),
+    });
+  });
+  await page.route("**/api/geocode?*", async (route) => {
+    queries.push(new URL(route.request().url()).searchParams.get("q") || "");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ results: [destination] }),
+    });
+  });
+
+  await page.goto("/map");
+  const search = page.getByRole("combobox", { name: "Where to go?" });
+  await search.fill("Ti");
+  await page.waitForTimeout(550);
+  expect(queries).toEqual([]);
+  await search.fill("Times");
+  await page.waitForTimeout(100);
+  await search.fill("Times Square");
+  await expect(page.getByRole("button", { name: destination.label, exact: true })).toBeVisible();
+  expect(queries).toEqual(["Times Square"]);
+
+  await search.fill("Book Culture");
+  await expect.poll(() => queries.length).toBe(2);
+  await search.fill("Times Square");
+  await expect(page.getByRole("button", { name: destination.label, exact: true })).toBeVisible();
+  expect(queries).toEqual(["Times Square", "Book Culture"]);
+});
+
 test("plans transit alternatives and exposes ordered steps", async ({ page }) => {
   await mockBase(page);
   await page.route("**/api/trips/plan", async (route) => {
@@ -243,7 +283,7 @@ test("plans transit alternatives and exposes ordered steps", async ({ page }) =>
       body: JSON.stringify(planFixture()),
     });
   });
-  await page.goto("/");
+  await page.goto("/map");
   await chooseDestination(page);
   const collapsePanel = page.getByRole("button", {
     name: "Collapse closure panel",
@@ -255,7 +295,7 @@ test("plans transit alternatives and exposes ordered steps", async ({ page }) =>
     exact: true,
   });
   if (await hideSidebar.count()) await hideSidebar.click();
-  await page.getByRole("button", { name: "Find take transit", exact: true }).click();
+  await page.getByRole("button", { name: "Find transit route", exact: true }).click();
   await expect(page.locator(".closure-panel")).toHaveClass(/expanded/);
   await expect(page.locator(".closure-panel")).not.toHaveClass(/sidebar-collapsed/);
   await expect(page.getByTestId("route-options")).toBeVisible();
@@ -263,6 +303,15 @@ test("plans transit alternatives and exposes ordered steps", async ({ page }) =>
   await expect(page.getByTestId("route-steps")).toBeVisible();
   await expect(
     page.getByText("Take L to Times Sq Station.", { exact: true }),
+  ).toBeVisible();
+  const walkingInstructions = page.getByRole("button", {
+    name: /Walk · 5 min/,
+    exact: false,
+  });
+  await expect(walkingInstructions).toBeVisible();
+  await walkingInstructions.click();
+  await expect(
+    page.getByText("Walk to 14 St Station.", { exact: true }),
   ).toBeVisible();
   await page.locator(".route-option-card").nth(1).click();
   await expect(page.getByText("Take M15 to Times Sq Station.", { exact: true })).toBeVisible();
@@ -333,16 +382,16 @@ test("uses one search while switching between walk and drive", async ({ page }) 
       }),
     });
   });
-  await page.goto("/");
+  await page.goto("/map");
   await chooseDestination(page);
   await page.getByRole("button", { name: "Travel mode: take transit", exact: true }).click();
   await page.getByRole("menuitemradio", { name: "Walk", exact: true }).click();
-  await page.getByRole("button", { name: "Find walk", exact: true }).click();
+  await page.getByRole("button", { name: "Find walking route", exact: true }).click();
   await expect(page.getByTestId("route-options")).toBeVisible();
   await expect(page.getByText("2 options", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Travel mode: walk", exact: true }).click();
   await page.getByRole("menuitemradio", { name: "Drive", exact: true }).click();
-  await page.getByRole("button", { name: "Find drive", exact: true }).click();
+  await page.getByRole("button", { name: "Find driving route", exact: true }).click();
   await expect(page.getByText("Drive", { exact: true })).toBeVisible();
   await expect.poll(() => modes).toEqual(["foot-walking", "driving-car"]);
 });
@@ -407,9 +456,9 @@ test("starts a trip, detects a missed train, and offers a switch", async ({ page
       }),
     });
   });
-  await page.goto("/");
+  await page.goto("/map");
   await chooseDestination(page);
-  await page.getByRole("button", { name: "Find take transit", exact: true }).click();
+  await page.getByRole("button", { name: "Find transit route", exact: true }).click();
   await page.getByRole("button", { name: "Start this route", exact: true }).click();
   await expect(page.getByTestId("active-trip")).toBeVisible();
   await expect(page.getByTestId("active-trip")).toContainText("Trip in progress");
@@ -436,9 +485,9 @@ test("shows a safe failure when transit planning is unavailable", async ({ page 
       }),
     });
   });
-  await page.goto("/");
+  await page.goto("/map");
   await chooseDestination(page);
-  await page.getByRole("button", { name: "Find take transit", exact: true }).click();
+  await page.getByRole("button", { name: "Find transit route", exact: true }).click();
   await expect(page.locator(".route-error")).toContainText(
     "Live transit planning is unavailable.",
   );
@@ -455,9 +504,9 @@ test("keeps the map workspace within a narrow viewport", async ({ page }) => {
       body: JSON.stringify(planFixture()),
     });
   });
-  await page.goto("/");
+  await page.goto("/map");
   await chooseDestination(page);
-  await page.getByRole("button", { name: "Find take transit", exact: true }).click();
+  await page.getByRole("button", { name: "Find transit route", exact: true }).click();
   await expect(page.getByTestId("route-options")).toBeVisible();
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),

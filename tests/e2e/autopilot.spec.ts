@@ -114,7 +114,7 @@ test("plans a deadline trip and explains the realtime itinerary", async ({ page 
       body: JSON.stringify(planFixture()),
     });
   });
-  await page.goto("/");
+  await page.goto("/map");
   await expect(page.getByRole("heading", { name: "Get there without guessing." })).toBeVisible();
   await chooseDestination(page);
   await page.getByRole("button", { name: "Get me there", exact: true }).click();
@@ -189,7 +189,7 @@ test("rechecks after a missed train and recommends switching", async ({ page }) 
       }),
     });
   });
-  await page.goto("/");
+  await page.goto("/map");
   await chooseDestination(page);
   await page.getByRole("button", { name: "Get me there", exact: true }).click();
   await page.getByRole("button", { name: /Recheck my trip/ }).click();
@@ -218,7 +218,7 @@ test("keeps the user informed when trip planning is unavailable", async ({ page 
       }),
     });
   });
-  await page.goto("/");
+  await page.goto("/map");
   await chooseDestination(page);
   await page.getByRole("button", { name: "Get me there", exact: true }).click();
   await expect(page.locator(".autopilot-alert[role='alert']")).toContainText(
@@ -228,7 +228,7 @@ test("keeps the user informed when trip planning is unavailable", async ({ page 
 });
 
 test("requires a real destination before requesting a trip plan", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/map");
   await page.getByRole("button", { name: "Get me there", exact: true }).click();
   await expect(page.locator(".autopilot-alert[role='alert']")).toContainText(
     "Choose a destination from the search results.",
@@ -246,7 +246,7 @@ test("stays usable on a narrow mobile viewport", async ({ page }) => {
       body: JSON.stringify(planFixture()),
     });
   });
-  await page.goto("/");
+  await page.goto("/map");
   await chooseDestination(page);
   await page.getByRole("button", { name: "Get me there", exact: true }).click();
   await expect(page.getByTestId("trip-plan")).toBeVisible();
@@ -275,7 +275,7 @@ test("keeps the detailed disruption map available as a secondary workflow", asyn
       }),
     });
   });
-  await page.goto("/");
+  await page.goto("/map");
   await page.getByRole("button", { name: "Explore disruptions", exact: true }).click();
   await expect(page.getByRole("button", { name: "Back to Trip Autopilot" })).toBeVisible();
   await expect(page.getByTestId("closure-map")).toBeVisible();

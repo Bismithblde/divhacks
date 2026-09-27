@@ -24,12 +24,10 @@ function createRoutingRouter(mode: RouteMode): WalkingRouter {
         departureTime,
         mode,
       };
-      const classified = classifyObstacles(
-        obstacles,
-        [],
-        mode,
-        accessOverrides,
-      );
+      const classified =
+        mode === "foot-walking"
+          ? classifyObstacles(obstacles, [], mode, accessOverrides)
+          : { hard: [], warnings: [] };
       try {
         const result = await findRoute(request, classified.hard);
         return {

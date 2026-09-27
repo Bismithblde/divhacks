@@ -123,27 +123,34 @@ export async function POST(request: Request) {
     );
   }
 
-  const snapshots = await getClosureSources();
+  const closureAware = validation.request.mode === "foot-walking";
+  const snapshots = closureAware ? await getClosureSources() : [];
   const features = deduplicateClosureFeatures(
     snapshots.flatMap((snapshot) => snapshot.features),
   );
-  const relevant = features.filter((feature) =>
-    overlaps(
-      feature,
-      validation.departure,
-      validation.departure + MAX_JOURNEY_WINDOW_MS,
-    ),
-  );
-  const classified = classifyObstacles(
-    relevant,
-    validation.request.avoidClosureIds,
-    validation.request.mode,
-    validation.request.accessOverrides,
-  );
-  const dataComplete = snapshots.every(
-    (snapshot) =>
-      snapshot.status.status === "ok" && snapshot.status.unmapped === 0,
-  );
+  const relevant = closureAware
+    ? features.filter((feature) =>
+        overlaps(
+          feature,
+          validation.departure,
+          validation.departure + MAX_JOURNEY_WINDOW_MS,
+        ),
+      )
+    : [];
+  const classified = closureAware
+    ? classifyObstacles(
+        relevant,
+        validation.request.avoidClosureIds,
+        validation.request.mode,
+        validation.request.accessOverrides,
+      )
+    : { hard: [], warnings: [] };
+  const dataComplete =
+    !closureAware ||
+    snapshots.every(
+      (snapshot) =>
+        snapshot.status.status === "ok" && snapshot.status.unmapped === 0,
+    );
   const warnings = [...classified.warnings];
   if (!dataComplete) {
     warnings.push({

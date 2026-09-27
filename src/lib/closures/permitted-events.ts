@@ -10,7 +10,6 @@ const PERMITTED_EVENTS_METADATA_URL =
 const SOURCE_ID = "permitted-events";
 const SOURCE_LABEL = "NYC permitted events";
 const CACHE_TTL = 5 * 60_000;
-const STALE_LIMIT = 60 * 60_000;
 
 export type PermittedEventRecord = {
   event_id?: unknown;
@@ -201,16 +200,6 @@ export async function loadPermittedEventSource(): Promise<Snapshot> {
         `Closure source ${SOURCE_ID}:`,
         error instanceof Error ? error.message : "unavailable",
       );
-      if (cached && Date.now() - cached.cachedAt < STALE_LIMIT) {
-        return {
-          ...cached,
-          status: {
-            ...cached.status,
-            status: "stale",
-            message: "Refresh failed. Showing the last successful download.",
-          },
-        };
-      }
       return {
         features: [],
         cachedAt: 0,

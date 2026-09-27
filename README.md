@@ -49,6 +49,19 @@ Never use a `NEXT_PUBLIC_` variable for these keys. Gemini is called only when
 an event is opened; validated event briefs are cached and fall back to source
 facts when Gemini is unavailable.
 
+To enable the public sign-in and sign-up flow, add the browser-safe values from
+your Supabase project:
+
+```sh
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-publishable-key
+```
+
+Allow `http://localhost:3000/auth/callback` in Supabase Authentication URL
+configuration locally, along with your deployed callback URL in production.
+The public landing page is `/`, the authenticated map is `/map`, and account
+access is available at `/auth`.
+
 ## Structure
 
 - `src/app/page.tsx`: Trip Autopilot entry point.

@@ -275,7 +275,7 @@ test("active monitoring reports arrival after the final leg ends", () => {
   );
 });
 
-test("replanning surfaces cancellation and a walk alternative explicitly", async () => {
+test("replanning surfaces cancellation without calculating a normal-trip walk fallback", async () => {
   const current = {
     ...itinerary("current", "2026-09-26T13:12:00.000Z"),
     alerts: [
@@ -306,7 +306,7 @@ test("replanning surfaces cancellation and a walk alternative explicitly", async
   );
   assert.equal(result.reasonCode, "service-cancelled");
   assert.equal(result.action, "switch");
-  assert.equal(result.options?.some((option) => option.action === "walk"), true);
+  assert.equal(result.options?.some((option) => option.action === "walk"), false);
 });
 
 test("LangGraph returns a grounded plan and deterministic explanation without an LLM key", async () => {
@@ -324,6 +324,28 @@ test("LangGraph returns a grounded plan and deterministic explanation without an
   assert.equal(response?.plan?.id, "subway-1");
   assert.equal(response?.explanation?.provider, "deterministic-template");
   assert.equal(response?.meta.planner, "langgraph-trip-autopilot");
+});
+
+test("transit plans skip the direct walking fallback when transit is verified", async () => {
+  const deps = dependencies([itinerary("subway-1", "2026-09-26T12:50:00.000Z")]);
+  let walkingCalls = 0;
+  const originalRoute = deps.walkingRouter.route;
+  deps.walkingRouter.route = async (...args) => {
+    walkingCalls += 1;
+    return originalRoute(...args);
+  };
+  const response = await planTrip(
+    {
+      origin,
+      destination,
+      timing: { type: "leave-now" },
+      mode: "transit-walk",
+      constraints: {},
+    },
+    deps,
+  );
+  assert.equal(response?.status, "ok");
+  assert.equal(walkingCalls, 0);
 });
 
 test("driving trips use the driving router and produce a drive leg", async () => {
@@ -446,6 +468,7 @@ test("OTP adapter normalizes realtime subway legs", async () => {
     assert.match(requestBody, /planConnection/);
     assert.match(requestBody, /CoordinateValue!/);
     assert.match(requestBody, /PlanDateTimeInput!/);
+    assert.match(requestBody, /first: 3/);
     assert.match(requestBody, /alertDescriptionText/);
   } finally {
     globalThis.fetch = originalFetch;

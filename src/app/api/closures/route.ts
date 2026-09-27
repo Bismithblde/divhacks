@@ -64,7 +64,7 @@ export async function GET(request: Request) {
     headers: {
       "Cache-Control":
         available && body.meta.complete
-          ? "public, max-age=30, s-maxage=60"
+          ? "public, max-age=60, s-maxage=60, must-revalidate"
           : "no-store",
     },
   });

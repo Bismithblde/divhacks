@@ -116,58 +116,74 @@ export function createTripGraph(dependencies: TripPlannerDependencies) {
     .addNode("verify_candidates", async (state) => {
       const snapshot = state.snapshot;
       if (!snapshot) return {};
-      const verified: VerifiedItinerary[] = [];
       const candidates = state.transitCandidates;
-      for (const candidate of candidates) {
-        verified.push(
-          await verifyItinerary(candidate, state.request, dependencies, snapshot),
-        );
-      }
+      const verified = await Promise.all(
+        candidates.map((candidate) =>
+          verifyItinerary(candidate, state.request, dependencies, snapshot),
+        ),
+      );
       const shouldTryDirect =
         state.request.mode !== "transit-walk" ||
         !candidates.length ||
-        !verified.some((candidate) => candidate.verified) ||
-        state.request.mode === "transit-walk";
-      if (shouldTryDirect) {
-        try {
-          verified.push(
-            await directRouteCandidate(
-              state.request,
-              dependencies,
-              snapshot,
-            ),
-          );
-        } catch (error) {
-          return {
-            verifiedCandidates: verified,
-            failures: [
-              error instanceof Error
-                ? error.message
-                : state.request.mode === "driving-car"
-                  ? "Driving provider unavailable."
-                  : "Walking provider unavailable.",
-            ],
-            warnings: [
-              {
-                code: "provider-limited" as const,
-                message:
-                  state.request.mode === "driving-car"
-                    ? "A verified driving route could not be calculated."
-                    : "A verified walking fallback could not be calculated.",
-                source: "OpenRouteService",
-              },
-            ],
-            attempts: { ...state.attempts, walking: state.attempts.walking + 1 },
-          };
-        }
+        !verified.some((candidate) => candidate.verified);
+      if (!shouldTryDirect) {
+        return {
+          verifiedCandidates: verified,
+          attempts: { ...state.attempts, walking: state.attempts.walking + 1 },
+        };
+      }
+      let direct: VerifiedItinerary;
+      try {
+        direct = await directRouteCandidate(
+          state.request,
+          dependencies,
+          snapshot,
+        );
+      } catch (error) {
+        return {
+          verifiedCandidates: verified,
+          failures: [
+            error instanceof Error
+              ? error.message
+              : state.request.mode === "driving-car"
+                ? "Driving provider unavailable."
+                : "Walking provider unavailable.",
+          ],
+          warnings: [
+            {
+              code: "provider-limited" as const,
+              message:
+                state.request.mode === "driving-car"
+                  ? "A verified driving route could not be calculated."
+                  : "A verified walking fallback could not be calculated.",
+              source: "OpenRouteService",
+            },
+          ],
+          attempts: { ...state.attempts, walking: state.attempts.walking + 1 },
+        };
       }
       return {
-        verifiedCandidates: verified,
+        verifiedCandidates: [...verified, direct],
         attempts: { ...state.attempts, walking: state.attempts.walking + 1 },
       };
     })
     .addNode("score_candidates", async (state) => {
-      const scored = rankItineraries(state.verifiedCandidates, state.request);
+      let candidates = state.verifiedCandidates;
+      if (
+        state.request.mode === "transit-walk" &&
+        dependencies.transitRouter.enrichRealtime
+      ) {
+        const preliminary = rankItineraries(candidates, state.request);
+        const enriched = await dependencies.transitRouter.enrichRealtime(
+          preliminary.slice(0, 2),
+        );
+        const updates = new Map(enriched.map((candidate) => [candidate.id, candidate]));
+        candidates = candidates.map((candidate) => {
+          const update = updates.get(candidate.id);
+          return update ? { ...candidate, ...update } : candidate;
+        });
+      }
+      const scored = rankItineraries(candidates, state.request);
       const warnings = warningsForPlan(scored[0], state.snapshot!);
       return {
         scoredCandidates: scored,

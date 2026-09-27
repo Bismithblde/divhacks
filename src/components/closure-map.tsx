@@ -619,6 +619,33 @@ export function ClosureMap({
         },
         layout: { "line-cap": "round", "line-join": "round" },
       });
+      map.addLayer({
+        id: "route-options-walking-arrows",
+        type: "symbol",
+        source: "route-options",
+        filter: ["==", ["get", "mode"], "WALK"],
+        layout: {
+          "symbol-placement": "line",
+          "symbol-spacing": 90,
+          "text-field": "➜",
+          "text-size": 15,
+          "text-keep-upright": false,
+          "text-allow-overlap": true,
+          "text-ignore-placement": true,
+          "text-rotation-alignment": "map",
+        },
+        paint: {
+          "text-color": "#326448",
+          "text-halo-color": "#ffffff",
+          "text-halo-width": 1.5,
+          "text-opacity": [
+            "case",
+            ["boolean", ["get", "selected"], false],
+            1,
+            0.7,
+          ],
+        },
+      });
       map.addSource("destination", { type: "geojson", data: empty });
       map.addLayer({
         id: "destination-point",

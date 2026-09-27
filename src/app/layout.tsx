@@ -27,17 +27,24 @@ const switzer = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "NYC closure map | DivHacks",
+  title: "Wrap | NYC route autopilot",
   description:
-    "Explore official NYC event and construction closure schedules on a walking-first map.",
-  appleWebApp: { capable: true, statusBarStyle: "default", title: "DivHacks" },
-  icons: { icon: "/icons/icon-192.png", apple: "/icons/apple-touch-icon.png" },
+    "Find a way across New York City, then adapt when transit or street conditions change.",
+  appleWebApp: { capable: true, statusBarStyle: "default", title: "Wrap" },
+  icons: {
+    icon: { url: "/icons/wrap-tab.jpg", type: "image/jpeg" },
+    shortcut: { url: "/icons/wrap-tab.jpg", type: "image/jpeg" },
+    apple: { url: "/icons/wrap-light.png", type: "image/png" },
+  },
 };
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#FFFFFF",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#FFFFFF" },
+    { media: "(prefers-color-scheme: dark)", color: "#121212" },
+  ],
 };
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (

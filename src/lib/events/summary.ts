@@ -39,7 +39,7 @@ export const geminiEventSummarySchema = z
   .object({
     tags: z.array(shortText(28)).min(1).max(2),
     keywords: z.array(shortText(24)).max(5),
-    facts: z.array(shortText(120)).max(3),
+    about: z.array(shortText(140)).min(1).max(2),
     roadImpact: impact,
     pedestrianImpact: impact,
     confidence: z.enum(["low", "medium", "high"]),
@@ -89,7 +89,7 @@ export function fallbackEventSummary(input: EventSummaryInput): EventSummary {
   return {
     tags: tags.length ? tags : ["Street event"],
     keywords: [],
-    facts: [],
+    about: [],
     roadImpact,
     pedestrianImpact,
     confidence:
@@ -158,7 +158,10 @@ export async function generateEventSummary(
                     "Create a compact NYC event brief from only the JSON facts below.",
                     "Return JSON only. No markdown, prose intro, advice, hype, or filler.",
                     "tags: 1-2 useful card labels. keywords: up to 5 short discovery terms.",
-                    "facts: up to 3 short, non-redundant facts useful before traveling.",
+                    "about: 1-2 short bullets explaining what the event is likely about, its theme, or its purpose.",
+                    "Do not repeat dates, times, permit status, borough, or location in about. Those are displayed elsewhere.",
+                    "You may use well-known context implied by the event name, but phrase uncertain inferences with likely, may, or appears.",
+                    "Make the pedestrian assessment answer whether someone can probably walk through the mapped event footprint.",
                     "Assess roads and pedestrians cautiously. An inference may use likely/partial/crowded with low confidence, but never present an inference as confirmed.",
                     "Use uncertain when the supplied facts do not support a conclusion.",
                     "Never invent attendance, traffic, amenities, accessibility, venue details, or numbers.",
@@ -170,14 +173,15 @@ export async function generateEventSummary(
           ],
           generationConfig: {
             temperature: 0,
-            maxOutputTokens: 320,
+            maxOutputTokens: 800,
+            thinkingConfig: { thinkingBudget: 0 },
             responseMimeType: "application/json",
             responseSchema: {
               type: "OBJECT",
               required: [
                 "tags",
                 "keywords",
-                "facts",
+                "about",
                 "roadImpact",
                 "pedestrianImpact",
                 "confidence",
@@ -196,9 +200,10 @@ export async function generateEventSummary(
                   maxItems: 5,
                   items: { type: "STRING" },
                 },
-                facts: {
+                about: {
                   type: "ARRAY",
-                  maxItems: 3,
+                  minItems: 1,
+                  maxItems: 2,
                   items: { type: "STRING" },
                 },
                 roadImpact: {

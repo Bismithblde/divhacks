@@ -28,14 +28,14 @@ test("event fallback stays compact and uses source-backed access facts", () => {
   assert.equal(summary.roadImpact, "fully-closed");
   assert.equal(summary.pedestrianImpact, "uncertain");
   assert.equal(summary.provider, "source");
-  assert.deepEqual(summary.facts, []);
+  assert.deepEqual(summary.about, []);
 });
 
 test("Gemini event output rejects unsupported numbers and prose formatting", () => {
   const valid = {
     tags: ["Food festival", "Street event"],
     keywords: ["food", "festival"],
-    facts: ["Official event footprint is on Mulberry Street."],
+    about: ["A neighborhood festival likely centered on Italian culture."],
     roadImpact: "fully-closed",
     pedestrianImpact: "crowded",
     confidence: "medium",
@@ -45,13 +45,13 @@ test("Gemini event output rejects unsupported numbers and prose formatting", () 
   assert.equal(parseGeminiEventSummary(valid, input)?.provider, "gemini");
   assert.equal(
     parseGeminiEventSummary(
-      { ...valid, facts: ["Expect 500 people."] },
+      { ...valid, about: ["Expect 500 people."] },
       input,
     ),
     null,
   );
   assert.equal(
-    parseGeminiEventSummary({ ...valid, facts: ["**Busy event**"] }, input),
+    parseGeminiEventSummary({ ...valid, about: ["**Busy event**"] }, input),
     null,
   );
 });

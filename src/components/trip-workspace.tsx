@@ -80,6 +80,20 @@ export function TripWorkspace() {
   const [showMap, setShowMap] = useState(false);
 
   useEffect(() => {
+    if (!plan?.warnings.length) return;
+    console.warn("Trip warnings:", plan.warnings);
+  }, [plan]);
+
+  useEffect(() => {
+    if (!decision) return;
+    const warnings = [
+      ...decision.warnings.map((warning) => warning.message),
+      ...(decision.explanation?.caveats || []),
+    ];
+    if (warnings.length) console.warn("Trip decision warnings:", warnings);
+  }, [decision]);
+
+  useEffect(() => {
     const query = destinationQuery.trim();
     if (destination || query.length < 2) return;
     const controller = new AbortController();
@@ -220,7 +234,7 @@ export function TripWorkspace() {
       <header className="autopilot-header">
         <div className="autopilot-brand">
           <span className="autopilot-mark"><MapPinned size={19} /></span>
-          <span>BlockedNYC</span>
+          <span>Wrap</span>
           <span className="autopilot-city">New York City</span>
         </div>
         <div className="autopilot-header-actions">
@@ -453,10 +467,6 @@ function DecisionCard({ decision }: { decision: TripDecision }) {
           <span>new predicted arrival · {selected.transfers} transfer{selected.transfers === 1 ? "" : "s"}</span>
         </div>
       )}
-      {decision.warnings.map((warning) => <p className="decision-warning" key={warning.code}>{warning.message}</p>)}
-      {decision.explanation?.caveats.map((caveat) => (
-        <p className="decision-warning" key={caveat}>{caveat}</p>
-      ))}
     </section>
   );
 }
