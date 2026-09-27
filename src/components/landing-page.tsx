@@ -271,6 +271,7 @@ export function LandingPage() {
         <nav className="landing-nav-links" aria-label="Landing page">
           <a href="#why-wrap">Why Wrap</a>
           <a href="#how-it-works">How it works</a>
+          <Link href="/demo">Demo</Link>
         </nav>
 
         <div className="landing-nav-actions">
@@ -460,6 +461,7 @@ export function LandingPage() {
           Wrap
         </Link>
         <div>
+          <Link href="/demo">Product demo</Link>
           {signedIn ? (
             <SignOutButton className="landing-sign-in" />
           ) : (
