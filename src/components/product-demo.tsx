@@ -1140,15 +1140,15 @@ function HomeScreen({
         <button className={styles.linkish} type="button" onClick={onOrigin}>
           {originOpen ? "Hide origin" : "Change origin"}
         </button>
+        <button className={styles.linkish} type="button" onClick={onClosures}>
+          Explore disruptions
+        </button>
       </p>
       {originOpen && (
         <p className={styles.originPanel}>
           Columbia University is the labeled demo origin when browser location is unavailable.
         </p>
       )}
-      <button className={styles.secondary} type="button" onClick={onClosures}>
-        Explore disruptions
-      </button>
       <p className={styles.fine}>Live estimates are not guarantees.</p>
     </div>
   );
@@ -1257,10 +1257,12 @@ function RoutesScreen({
           <Clock3 size={16} aria-hidden="true" />
           Arrive by {deadline.label}
         </button>
-        <button className={cx(styles.submit, styles.hint)} type="button" onClick={onStart} disabled={!selected}>
-          Start this trip
-          <ArrowRight size={18} aria-hidden="true" />
-        </button>
+        <div className={styles.sheetAction}>
+          <button className={cx(styles.submit, styles.hint)} type="button" onClick={onStart} disabled={!selected}>
+            Start this trip
+            <ArrowRight size={18} aria-hidden="true" />
+          </button>
+        </div>
       </section>
     </div>
   );
@@ -1363,12 +1365,14 @@ function TripScreen({
             </div>
           ))}
         </div>
-        <button className={cx(styles.submit, styles.hint)} type="button" onClick={onRecheck}>
-          Something changed? Recheck my trip
-        </button>
-        <button className={styles.secondary} type="button" onClick={onClosures}>
-          View closures
-        </button>
+        <div className={styles.sheetAction}>
+          <button className={cx(styles.submit, styles.hint)} type="button" onClick={onRecheck}>
+            Something changed? Recheck my trip
+          </button>
+          <button className={styles.secondary} type="button" onClick={onClosures}>
+            View closures
+          </button>
+        </div>
       </section>
     </div>
   );
@@ -1553,10 +1557,12 @@ function ClosureScreen({
             Blocks {item.blocks.toLowerCase()}. Sidewalks are {item.sidewalk} in this sample. {item.until}.
           </span>
         </div>
-        <button className={cx(styles.submit, styles.hint)} type="button" onClick={onPlanAround}>
-          Plan around this
-          <ArrowRight size={18} aria-hidden="true" />
-        </button>
+        <div className={styles.sheetAction}>
+          <button className={cx(styles.submit, styles.hint)} type="button" onClick={onPlanAround}>
+            Plan around this
+            <ArrowRight size={18} aria-hidden="true" />
+          </button>
+        </div>
         <p className={styles.fine}>Sample permit, not a live closure.</p>
       </section>
     </div>
