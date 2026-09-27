@@ -31,6 +31,38 @@
   --radius-lg: 16px;
   --radius-xl: 24px;
   --shadow-floating: 0 8px 28px rgb(36 53 44 / 10%);
+  --surface-glass: rgb(255 255 255 / 86%);
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  --background: #121212;
+  --surface: #1c1c1c;
+  --surface-muted: #262626;
+  --foreground: #f3f3f3;
+  --muted: #b5b5b5;
+  --border: #3a3a3a;
+  --control-border: #8a8a8a;
+  --primary: #f3f3f3;
+  --on-primary: #181818;
+  --primary-hover: #e2e2e2;
+  --secondary: #2c2c2c;
+  --secondary-hover: #363636;
+  --sage: #1e3a2c;
+  --on-sage: #d7efe4;
+  --lavender: #2c2640;
+  --on-lavender: #e4dcf4;
+  --accent: #3a2a22;
+  --on-accent: #f6e1d3;
+  --error: #3a2422;
+  --on-error: #f3c7c4;
+  --warning: #3a3018;
+  --on-warning: #ffe3a3;
+  --info: #1c2c3a;
+  --on-info: #c5daf0;
+  --focus: #c8b8e4;
+  --shadow-floating: 0 8px 28px rgb(0 0 0 / 40%);
+  --surface-glass: rgb(18 18 18 / 88%);
+  color-scheme: dark;
 }
 @theme inline {
   --color-background: var(--background);
@@ -190,6 +222,28 @@ svg {
 .nav-item:hover {
   color: var(--foreground);
   background: var(--surface-muted);
+}
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: center;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--foreground);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.theme-toggle:hover {
+  background: var(--surface-muted);
+}
+.autopilot-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 .workspace {
   flex: 1;
@@ -1254,12 +1308,19 @@ svg {
   font-family: var(--font-switzer), Arial, sans-serif;
   font-size: 10px;
 }
+:root[data-theme="dark"] .maplibregl-ctrl-attrib {
+  background: rgb(18 18 18 / 78%);
+  color: #c4c4c4;
+}
+:root[data-theme="dark"] .maplibregl-ctrl-attrib a {
+  color: #d7efe4;
+}
 .maplibregl-ctrl-scale {
   font-family: var(--font-switzer), Arial, sans-serif;
   margin-left: 24px !important;
   border-color: var(--muted) !important;
   color: var(--foreground);
-  background: rgb(255 255 255 / 80%);
+  background: var(--surface-glass);
 }
 .spin {
   animation: spin 1s linear infinite;
@@ -1648,6 +1709,11 @@ svg {
     radial-gradient(circle at 84% 8%, rgb(220 235 221 / 48%), transparent 30rem),
     var(--background);
 }
+:root[data-theme="dark"] .autopilot-shell {
+  background:
+    radial-gradient(circle at 84% 8%, rgb(37 77 56 / 32%), transparent 30rem),
+    var(--background);
+}
 .autopilot-header {
   min-height: 76px;
   display: flex;
@@ -1656,7 +1722,7 @@ svg {
   gap: 20px;
   padding: 0 40px;
   border-bottom: 1px solid var(--border);
-  background: rgb(255 255 255 / 86%);
+  background: var(--surface-glass);
   backdrop-filter: blur(14px);
 }
 .autopilot-brand {
@@ -1931,7 +1997,7 @@ svg {
   padding: 30px;
   border: 1px solid var(--border);
   border-radius: 20px;
-  background: rgb(255 255 255 / 72%);
+  background: var(--surface-glass);
   text-align: center;
 }
 .autopilot-empty-icon {

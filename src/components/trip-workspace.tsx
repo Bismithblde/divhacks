@@ -21,6 +21,7 @@ import type {
   TripPlanResponse,
 } from "@/lib/trips/types";
 import { MapWorkspace } from "./map-workspace";
+import { ThemeToggle } from "./theme-toggle";
 
 function defaultArrivalInput() {
   const date = new Date(Date.now() + 45 * 60_000);
@@ -216,9 +217,12 @@ export function TripWorkspace() {
           <span>BlockedNYC</span>
           <span className="autopilot-city">New York City</span>
         </div>
-        <button className="autopilot-nav-button" onClick={() => setShowMap(true)}>
-          Explore disruptions
-        </button>
+        <div className="autopilot-header-actions">
+          <ThemeToggle />
+          <button className="autopilot-nav-button" onClick={() => setShowMap(true)}>
+            Explore disruptions
+          </button>
+        </div>
       </header>
       <main className="autopilot-main">
         <section className="autopilot-hero" aria-labelledby="autopilot-title">

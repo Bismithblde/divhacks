@@ -41,8 +41,17 @@ export const viewport: Viewport = {
 };
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${switzer.variable} antialiased`}>
+    <html
+      lang="en"
+      className={`${switzer.variable} antialiased`}
+      suppressHydrationWarning
+    >
       <body>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem("blockednyc-theme");if(t!=="light"&&t!=="dark"){t=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";}document.documentElement.dataset.theme=t;document.documentElement.style.colorScheme=t;}catch(e){}})();`,
+          }}
+        />
         {children}
         <ServiceWorker />
       </body>

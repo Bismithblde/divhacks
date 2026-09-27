@@ -24,6 +24,79 @@ import type { Coordinate, RouteFeature } from "@/lib/routing/types";
 import { DEMO_LOCATION } from "@/lib/location";
 
 setWorkerUrl("/maplibre/maplibre-gl-worker.mjs");
+
+const originalMapPaint = new WeakMap<
+  Map,
+  globalThis.Map<string, unknown>
+>();
+
+function paintForTheme(
+  map: Map,
+  layer: string,
+  property: string,
+  darkValue: unknown,
+  dark: boolean,
+) {
+  if (!map.getLayer(layer)) return;
+  let stored = originalMapPaint.get(map);
+  if (!stored) {
+    stored = new globalThis.Map<string, unknown>();
+    originalMapPaint.set(map, stored);
+  }
+  const key = `${layer}:${property}`;
+  if (!stored.has(key)) stored.set(key, map.getPaintProperty(layer, property));
+  map.setPaintProperty(layer, property, dark ? darkValue : stored.get(key));
+}
+
+function applyMapTheme(map: Map, dark: boolean) {
+  const fills: Array<[string, string]> = [
+    ["background", "#161616"],
+    ["park", "#1a3328"],
+    ["water", "#1a2830"],
+    ["landuse_residential", "#222220"],
+    ["landcover_wood", "#1a3328"],
+    ["building", "#2a2a28"],
+  ];
+  for (const [layer, color] of fills) {
+    const property = layer === "background" ? "background-color" : "fill-color";
+    paintForTheme(map, layer, property, color, dark);
+  }
+  paintForTheme(map, "building", "fill-outline-color", "#333330", dark);
+  for (const layer of map.getStyle()?.layers ?? []) {
+    if (layer.type !== "line") continue;
+    if (
+      !/^(highway|tunnel|aeroway|railway|road_|waterway|boundary)/.test(
+        layer.id,
+      )
+    ) {
+      continue;
+    }
+    const casing = layer.id.includes("casing");
+    paintForTheme(
+      map,
+      layer.id,
+      "line-color",
+      casing ? "#2a2a2a" : "#5c5c5c",
+      dark,
+    );
+  }
+  paintForTheme(map, "closure-casing", "line-color", "#111111", dark);
+  paintForTheme(map, "selection-line", "line-color", "#f3f3f3", dark);
+  paintForTheme(map, "selection-point", "circle-color", "#f3f3f3", dark);
+  paintForTheme(map, "selection-point", "circle-stroke-color", "#111111", dark);
+  paintForTheme(map, "destination-point", "circle-color", "#f3f3f3", dark);
+  paintForTheme(map, "destination-point", "circle-stroke-color", "#111111", dark);
+  paintForTheme(map, "route-casing", "line-color", "#111111", dark);
+  for (const layer of map.getStyle()?.layers ?? []) {
+    if (layer.type !== "symbol") continue;
+    if (map.getPaintProperty(layer.id, "text-color") !== undefined) {
+      paintForTheme(map, layer.id, "text-color", "#e4e4e4", dark);
+    }
+    if (map.getPaintProperty(layer.id, "text-halo-color") !== undefined) {
+      paintForTheme(map, layer.id, "text-halo-color", "#161616", dark);
+    }
+  }
+}
 const DEFAULT_MAP_CENTER: [number, number] = [
   DEMO_LOCATION.longitude,
   DEMO_LOCATION.latitude,
@@ -525,6 +598,19 @@ export function ClosureMap({
     };
   }, []);
 
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map) return;
+    const apply = () =>
+      applyMapTheme(map, document.documentElement.dataset.theme === "dark");
+    apply();
+    const observer = new MutationObserver(apply);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+    return () => observer.disconnect();
+  }, [ready]);
   useEffect(() => {
     if (ready)
       (

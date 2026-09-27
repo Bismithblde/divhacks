@@ -53,6 +53,7 @@ import type {
   RouteFeature,
 } from "@/lib/routing/types";
 import { DEMO_LOCATION } from "@/lib/location";
+import { ThemeToggle } from "@/components/theme-toggle";
 import type {
   GeocodeResponse,
   GeocodeResult,
@@ -545,6 +546,7 @@ export function MapWorkspace() {
           >
             Data sources
           </button>
+          <ThemeToggle />
         </nav>
       </header>
       <main className="workspace">
