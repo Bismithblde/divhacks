@@ -30,6 +30,10 @@ Requires Node.js 20.9+ and npm.
 
 Open http://localhost:3000. Next.js serves both frontend and backend.
 
+Open http://localhost:3000/demo for an interactive phone demo of the trip
+flow. You click through the screens yourself — it is not a slideshow. The
+trips are sample data, not live routing. From the landing page, use Demo.
+
     npm run lint
     npm run build
     npm start
@@ -65,6 +69,7 @@ access is available at `/auth`.
 ## Structure
 
 - `src/app/page.tsx`: Trip Autopilot entry point.
+- `src/app/demo/page.tsx`: interactive phone demo of the sample trip flow.
 - `src/app/api/health/route.ts`: backend health endpoint (`GET /api/health`).
 - `src/app/api/closures/route.ts`: normalized NYC closure feed.
 - `src/app/api/geocode/route.ts`: bounded server-side NYC destination search.

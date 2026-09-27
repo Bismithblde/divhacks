@@ -3838,8 +3838,9 @@ button.landing-sign-in {
 }
 .landing-footer > div {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 20px;
+  gap: 8px 20px;
 }
 .landing-proof {
   display: grid;
